@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iraval — Fix Exchange Book IDs</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #2563eb; }
+    .status { padding: 10px 14px; margin: 6px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; font-size: 14px; }
+    .status.ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .status.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .status.run { border-left-color: #3b82f6; background: #eff6ff; }
+    button { background: #2563eb; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; cursor: pointer; }
+    button:hover:not(:disabled) { background: #1d4ed8; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .section { background: white; padding: 16px; margin: 16px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+  <h1>🔧 Fix Exchange Book IDs</h1>
+  <p>Maps exchange records to actual book document IDs in Firestore.</p>
+  <div class="section">
+    <button id="seedBtn" onclick="seedData()">Fix Exchange IDs</button>
+  </div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, serverTimestamp, doc, setDoc, getDoc, getDocs, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    function log(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      document.getElementById('log').appendChild(el);
+    }
+
+    window.seedData = async function() {
+      const btn = document.getElementById('seedBtn');
+      btn.disabled = true;
+      btn.textContent = 'Working...';
+      document.getElementById('log').innerHTML = '';
+
+      const email = 'alice_books@iraval.test';
+      const password = 'Test123456!';
+
+      try {
+        log('🔐 Signing in...', 'run');
+        await signInWithEmailAndPassword(auth, email, password);
+        log('✓ Signed in', 'ok');
+
+        const uid = auth.currentUser.uid;
+        log(`Admin UID: ${uid}`, 'run');
+
+        // Step 1: Find actual book document IDs for each user
+        log('📚 Finding actual book IDs...', 'run');
+
+        // Admin's books
+        const adminBooksSnap = await getDocs(collection(db, 'users', uid, 'books'));
+        const adminBookIds = [];
+        adminBooksSnap.forEach(d => {
+          const data = d.data();
+          adminBookIds.push({ id: d.id, title: data.title, author: data.author });
+        });
+        log(`Admin books:`, 'run');
+        adminBookIds.forEach(b => log(`  ${b.id} = ${b.title}`, 'run'));
+
+        // Bob's books
+        const bobSnap = await getDocs(collection(db, 'users', '1j1bLY8YynhkYS6hwB4PP3bs9dM2', 'books'));
+        const bobBookIds = [];
+        bobSnap.forEach(d => {
+          const data = d.data();
+          bobBookIds.push({ id: d.id, title: data.title, author: data.author });
+        });
+        log(`Bob's books:`, 'run');
+        bobBookIds.forEach(b => log(`  ${b.id} = ${b.title}`, 'run'));
+
+        // Step 2: Update exchange records
+        log('🔄 Updating exchange records...', 'run');
+
+        // Alice → Bob: Dune exchange (pending) — find admin's book and bob's Dune
+        // Use admin's first book for the exchange
+        if (adminBookIds.length > 0 && bobBookIds.length > 0) {
+          // Find the book IDs by title
+          const adminBookId = adminBookIds.find(b => b.title === '1984')?.id || adminBookIds[0].id;
+          const bobDuneId = bobBookIds.find(b => b.title === 'Dune')?.id || bobBookIds[0].id;
+
+          // Update: alice → bob (admin offers their book, wants Dune)
+          await setDoc(doc(db, 'exchanges', `ex_${uid}_bob_1`), {
+            senderId: uid, receiverId: '1j1bLY8YynhkYS6hwB4PP3bs9dM2',
+            bookId: adminBookId, bookTitle: '1984', bookAuthor: 'George Orwell',
+            status: 'pending', requestedAt: serverTimestamp(), note: 'Can I get Dune?',
+          }, { merge: true });
+          log(`  ✓ Alice→Bob: bookId=${adminBookId}`, 'ok');
+
+          // Update: bob → alice (bob offers Dune, wants 1984)
+          await setDoc(doc(db, 'exchanges', `ex_bob_${uid}_1`), {
+            senderId: '1j1bLY8YynhkYS6hwB4PP3bs9dM2', receiverId: uid,
+            bookId: bobDuneId, bookTitle: 'Dune', bookAuthor: 'Frank Herbert',
+            status: 'accepted', requestedAt: serverTimestamp(),
+          }, { merge: true });
+          log(`  ✓ Bob→Alice: bookId=${bobDuneId}`, 'ok');
+        }
+
+        log('✅ Done! Refresh your Library page.', 'ok');
+
+      } catch (err) {
+        log(`❌ Error: ${err.message}`, 'fail');
+        console.error(err);
+      } finally {
+        try { await signOut(auth); } catch {}
+        btn.disabled = false;
+        btn.textContent = 'Fix Exchange IDs';
+      }
+    };
+  </script>
+</body>
+</html>

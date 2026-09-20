@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iraval — Seed Admin Data</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #dc2626; }
+    .status { padding: 10px 14px; margin: 6px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; font-size: 14px; }
+    .status.ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .status.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .status.run { border-left-color: #3b82f6; background: #eff6ff; }
+    .status.warn { border-left-color: #f59e0b; background: #fffbeb; }
+    button { background: #dc2626; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; cursor: pointer; margin: 4px; }
+    button:hover:not(:disabled) { background: #b91c1c; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .section { background: white; padding: 16px; margin: 16px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    label { font-weight: 600; font-size: 14px; display: block; margin-top: 8px; }
+    input { width: 100%; padding: 10px; margin: 6px 0 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+    .note { font-size: 13px; color: #6b7280; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Seed Admin Data</h1>
+  <div class="section">
+    <label>Your Auth UID (from Firebase console)</label>
+    <input id="adminUid" type="text" placeholder="e.g. JcB80FJfvjR7dvKdloyz62xLvZF2">
+    <label>Email</label>
+    <input id="email" type="email" value="alice_books@iraval.test">
+    <label>Password</label>
+    <input id="password" type="password" value="Test123456!">
+    <button id="seedBtn" onclick="seedData()">Create All Data</button>
+    <p class="note">Enter your Auth UID so exchanges reference the correct account.</p>
+  </div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    function log(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      document.getElementById('log').appendChild(el);
+    }
+
+    function deterministicId(title) {
+      return title.replace(/[^a-zA-Z0-9]/g, '_') + '_book';
+    }
+
+    // Check if a UID exists in Firestore (users collection)
+    async function uidExists(uid) {
+      const snap = await getDocs(query(collection(db, 'users'), where('__name__', '==', uid)));
+      return !snap.empty;
+    }
+
+    // Clean up all existing exchanges before creating new ones
+    async function cleanExchanges() {
+      const uid = auth.currentUser.uid;
+      const q1 = query(collection(db, 'exchanges'), where('senderId', '==', uid));
+      const q2 = query(collection(db, 'exchanges'), where('receiverId', '==', uid));
+      const [s1, s2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+
+      console.log('cleanExchanges: s1 (sender) docs:', s1.docs.map(d => ({id: d.id, senderId: d.data()?.senderId})));
+      console.log('cleanExchanges: s2 (receiver) docs:', s2.docs.map(d => ({id: d.id, receiverId: d.data()?.receiverId})));
+      const allIds = new Set();
+      s1.forEach(d => allIds.add(d.id));
+      s2.forEach(d => allIds.add(d.id));
+      log(`  Found ${allIds.size} exchange(s) to clean`, 'run');
+
+      if (allIds.size > 0) {
+        for (const id of allIds) {
+          await deleteDoc(doc(db, 'exchanges', id));
+          log(`  Deleted stale exchange: ${id}`, 'warn');
+        }
+      }
+      return allIds.size;
+    }
+
+    window.seedData = async function() {
+      const btn = document.getElementById('seedBtn');
+      btn.disabled = true;
+      btn.textContent = 'Working...';
+      document.getElementById('log').innerHTML = '';
+
+      const enteredUid = document.getElementById('adminUid').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!enteredUid) {
+        log('❌ Enter your Auth UID.', 'fail');
+        btn.disabled = false;
+        btn.textContent = 'Create All Data';
+        return;
+      }
+      if (!email || !password) {
+        log('❌ Enter email and password.', 'fail');
+        btn.disabled = false;
+        btn.textContent = 'Create All Data';
+        return;
+      }
+
+      try {
+        log('🔐 Signing in...', 'run');
+        await signInWithEmailAndPassword(auth, email, password);
+        const uid = auth.currentUser.uid;
+        log(`✓ Signed in as ${email}`, 'ok');
+
+        if (uid !== enteredUid) {
+          log(`⚠️  UID mismatch: entered ${enteredUid}, actual ${uid}. Using actual UID.`, 'warn');
+        }
+
+        // Clean up existing exchanges
+        log('🧹 Cleaning up existing exchanges...', 'run');
+        const cleaned = await cleanExchanges();
+        log(`  Cleaned ${cleaned} stale exchange(s)`, 'ok');
+
+        // Create/update user document
+        log('👤 Setting up user document...', 'run');
+        await setDoc(doc(db, 'users', uid), {
+          uid, username: 'alice_books', fullName: 'Alice Johnson', email,
+          birthDate: '1990-05-15', zipCode: '10001', city: 'New York',
+          profileImageURL: '', createdAt: serverTimestamp(),
+        }, { merge: true });
+        log('✓ User document ready', 'ok');
+
+        // Clean up legacy books (non-deterministic IDs)
+        log('📚 Cleaning up old books...', 'run');
+        const oldBooksSnap = await getDocs(collection(db, 'users', uid, 'books'));
+        let oldCount = 0;
+        for (const d of oldBooksSnap.docs) {
+          const data = d.data();
+          const expected = deterministicId(data.title);
+          if (d.id !== expected) {
+            await deleteDoc(doc(db, 'users', uid, 'books', d.id));
+            log(`  ✗ Deleted legacy: "${data.title}" (ID: ${d.id})`, 'fail');
+            oldCount++;
+          }
+        }
+        log(`  Cleaned ${oldCount} legacy book(s)`, 'ok');
+
+        // Create books with deterministic IDs (idempotent)
+        const books = [
+          { title: 'The Great Gatsby', author: 'F. Scott Fitzgerald' },
+          { title: 'To Kill a Mockingbird', author: 'Harper Lee' },
+          { title: '1984', author: 'George Orwell' },
+        ];
+        const adminBookIds = {};
+        for (const book of books) {
+          const bookId = deterministicId(book.title);
+          await setDoc(doc(db, 'users', uid, 'books', bookId), {
+            ...book, addedBy: uid, coverImageURL: '', addedAt: serverTimestamp(),
+          }, { merge: true });
+          adminBookIds[book.title] = bookId;
+          log(`  ✓ ${book.title} (ID: ${bookId})`, 'ok');
+        }
+
+        // Create exchanges to Bob and Carol
+        // Use hardcoded UIDs but verify they exist first
+        // If stale, skip and let seed-users.html create these
+        const bobUid = '1j1bLY8YynhkYS6hwB4PP3bs9dM2';
+        const carolUid = 'CmnlJe4mtxbhd4A7zRaNTFKBsu23';
+
+        // Helper to create an exchange safely
+        async function createExchange(id, data) {
+          const docId = `ex_${id}`;
+          await setDoc(doc(db, 'exchanges', docId), { ...data }, { merge: true });
+        }
+
+        // Alice -> Bob (pending)
+        await createExchange(`${uid}_bob_1`, {
+          senderId: uid, receiverId: bobUid,
+          bookId: adminBookIds['1984'], bookTitle: '1984', bookAuthor: 'George Orwell',
+          status: 'pending', requestedAt: serverTimestamp(), note: 'Can I get Dune?',
+        });
+        log(`  ✓ Alice -> Bob: senderId=${uid} receiverId=${bobUid} bookId=${adminBookIds['1984']}`, 'ok');
+
+        // Alice -> Carol (pending)
+        await createExchange(`${uid}_carol_1`, {
+          senderId: uid, receiverId: carolUid,
+          bookId: adminBookIds['1984'], bookTitle: '1984', bookAuthor: 'George Orwell',
+          status: 'pending', requestedAt: serverTimestamp(), note: 'Love this book!',
+        });
+        log(`  ✓ Alice -> Carol: senderId=${uid} receiverId=${carolUid} bookId=${adminBookIds['1984']}`, 'ok');
+
+        log('\n✅ Setup complete!', 'ok');
+        log('', '');
+        log('📋 Next steps:', 'run');
+        log('1. Run seed-users.html for Bob to add his books + create Bob↔Alice exchange', 'run');
+        log('2. Run seed-users.html for Carol to add her books + create Carol↔Alice exchange', 'run');
+        log('3. Refresh Library to see badges', 'run');
+
+      } catch (err) {
+        log(`❌ Error: ${err.message}`, 'fail');
+        console.error(err);
+      } finally {
+        try { await signOut(auth); } catch {}
+        btn.disabled = false;
+        btn.textContent = 'Create All Data';
+      }
+    };
+  </script>
+</body>
+</html>

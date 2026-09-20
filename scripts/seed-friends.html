@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iraval — Add Friends Data</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #2563eb; }
+    .status { padding: 10px 14px; margin: 6px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; font-size: 14px; }
+    .status.ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .status.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .status.run { border-left-color: #3b82f6; background: #eff6ff; }
+    button { background: #2563eb; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; cursor: pointer; }
+    button:hover:not(:disabled) { background: #1d4ed8; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .section { background: white; padding: 16px; margin: 16px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+  <h1>👥 Add Friends + Books Data</h1>
+  <p>Adds bob's and carol's user documents + books + friend requests (using your Auth account to create them).</p>
+
+  <div class="section">
+    <label>Email</label>
+    <input id="adminEmail" type="email" value="alice_books@iraval.test">
+    <label>Password</label>
+    <input id="adminPassword" type="password" value="Test123456!">
+    <button id="seedBtn" onclick="seedData()">Add Friends Data</button>
+  </div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, serverTimestamp, deleteDoc, doc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    function log(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      document.getElementById('log').appendChild(el);
+    }
+
+    window.seedData = async function() {
+      const btn = document.getElementById('seedBtn');
+      btn.disabled = true;
+      btn.textContent = 'Working...';
+      document.getElementById('log').innerHTML = '';
+
+      const email = document.getElementById('adminEmail').value.trim();
+      const password = document.getElementById('adminPassword').value;
+
+      if (!email || !password) {
+        log('❌ Enter email and password.', 'fail');
+        btn.disabled = false;
+        btn.textContent = 'Add Friends Data';
+        return;
+      }
+
+      try {
+        log('🔐 Signing in...', 'run');
+        await signInWithEmailAndPassword(auth, email, password);
+        log('✓ Signed in', 'ok');
+
+        const uid = auth.currentUser.uid;
+        log(`✅ Signed in as ${auth.currentUser.email} (UID: ${uid})`, 'ok');
+
+        // Bob and Carol user documents — need real Auth UIDs for these
+        // Since we're the admin, we can't create documents for other UIDs (rules block it)
+        // But we CAN create user documents for bob/carol if we use THEIR UIDs as document IDs
+        // However, the rules require request.auth.uid == userId, so this won't work either
+        // We need to use the "email" trick — but that won't work either
+
+        // Actually, the rules say: allow write: if request.auth != null && request.auth.uid == userId
+        // So we can ONLY write to documents where the ID matches our Auth UID
+        // We CANNOT create bob/carol user documents
+
+        log('⚠️ Firestore rules block creating other users\' documents.', 'run');
+        log('   You must create bob and carol user documents manually.', 'run');
+        log('', '');
+
+        // But we CAN create friend requests and exchanges (rules allow any auth user to create)
+        log('🤝 Creating friend requests...', 'run');
+
+        // Clean up old friend requests for this user
+        const oldFrIds = [`fr_${uid}_bob_reads`, `fr_bob_reads_${uid}`, `fr_${uid}_carol_pages`, `fr_carol_pages_${uid}`];
+        for (const id of oldFrIds) {
+          try { await deleteDoc(doc(db, 'friendRequests', id)); } catch {}
+        }
+        log('  Cleaned up old requests', 'ok');
+
+        // Create friend requests
+        await setDoc(doc(db, 'friendRequests', `fr_${uid}_bob_reads`), {
+          senderId: uid, receiverId: 'bob_reads', status: 'pending', sentAt: serverTimestamp(),
+        }, { merge: true });
+        log('  ✓ You → bob_reads (pending)', 'ok');
+
+        await setDoc(doc(db, 'friendRequests', `fr_bob_reads_${uid}`), {
+          senderId: 'bob_reads', receiverId: uid, status: 'accepted', sentAt: serverTimestamp(),
+        }, { merge: true });
+        log('  ✓ bob_reads → You (accepted)', 'ok');
+
+        await setDoc(doc(db, 'friendRequests', `fr_${uid}_carol_pages`), {
+          senderId: uid, receiverId: 'carol_pages', status: 'accepted', sentAt: serverTimestamp(),
+        }, { merge: true });
+        log('  ✓ You → carol_pages (accepted)', 'ok');
+
+        log('📦 Creating exchanges...', 'run');
+        const oldExIds = [`ex_${uid}_bob_1`, `ex_bob_${uid}_1`, `ex_${uid}_carol_1`];
+        for (const id of oldExIds) {
+          try { await deleteDoc(doc(db, 'exchanges', id)); } catch {}
+        }
+
+        await setDoc(doc(db, 'exchanges', `ex_${uid}_bob_1`), {
+          senderId: uid, receiverId: 'bob_reads', bookId: 'bob_dune', bookTitle: 'Dune', bookAuthor: 'Frank Herbert', status: 'pending', requestedAt: serverTimestamp(), note: 'Can I get Dune?',
+        }, { merge: true });
+        log('  ✓ You → bob_reads: Dune (pending)', 'ok');
+
+        await setDoc(doc(db, 'exchanges', `ex_bob_${uid}_1`), {
+          senderId: 'bob_reads', receiverId: uid, bookId: 'alice_1984', bookTitle: '1984', bookAuthor: 'George Orwell', status: 'accepted', requestedAt: serverTimestamp(),
+        }, { merge: true });
+        log('  ✓ bob_reads → You: 1984 (accepted)', 'ok');
+
+        await setDoc(doc(db, 'exchanges', `ex_${uid}_carol_1`), {
+          senderId: uid, receiverId: 'carol_pages', bookId: 'carol_pride', bookTitle: 'Pride and Prejudice', bookAuthor: 'Jane Austen', status: 'pending', requestedAt: serverTimestamp(), note: 'Love this book!',
+        }, { merge: true });
+        log('  ✓ You → carol_pages: Pride (pending)', 'ok');
+
+        log('', '');
+        log('✅ Friend requests + exchanges created!', 'ok');
+        log('', '');
+        log('📋 To make FRIENDS list work, you need to create these user documents:', 'run');
+        log('', '');
+        log(`  Document ID: 1j1bLY8YynhkYS6hwB4PP3bs9dM2`, 'run');
+        log(`  Fields: uid="1j1bLY8YynhkYS6hwB4PP3bs9dM2", username="bob_reads", fullName="Bob Smith", email="bob_reads@iraval.test", birthDate="1988-11-22", zipCode="94101", city="San Francisco", profileImageURL="", createdAt=timestamp`, 'run');
+        log('', '');
+        log(`  Document ID: CmnlJe4mtxbhd4A7zRaNTFKBsu23`, 'run');
+        log(`  Fields: uid="CmnlJe4mtxbhd4A7zRaNTFKBsu23", username="carol_pages", fullName="Carol Davis", email="carol_pages@iraval.test", birthDate="1992-03-08", zipCode="60601", city="Chicago", profileImageURL="", createdAt=timestamp`, 'run');
+        log('', '');
+        log('Then add books subcollections under each.', 'run');
+
+      } catch (err) {
+        log(`❌ Error: ${err.message}`, 'fail');
+        console.error(err);
+      } finally {
+        try { await signOut(auth); } catch {}
+        btn.disabled = false;
+        btn.textContent = 'Add Friends Data';
+      }
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iraval — Create User + Fix Exchanges</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 650px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #2563eb; }
+    .status { padding: 10px 14px; margin: 6px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; font-size: 14px; }
+    .status.ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .status.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .status.run { border-left-color: #3b82f6; background: #eff6ff; }
+    .status.warn { border-left-color: #f59e0b; background: #fffbeb; }
+    button { background: #2563eb; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; cursor: pointer; margin: 4px; }
+    button:hover:not(:disabled) { background: #1d4ed8; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .section { background: white; padding: 16px; margin: 16px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+    th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+    th { font-weight: 600; color: #374151; }
+    td:first-child { font-weight: 600; color: #2563eb; width: 120px; }
+    input[type="text"] { width: 100%; padding: 8px; margin: 4px 0 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+    .note { font-size: 13px; color: #6b7280; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Create User + Fix Exchanges</h1>
+  <div class="section">
+    <label>Alice's Auth UID (from Firebase console)</label>
+    <input id="adminUid" type="text" value="JcB80FJfvjR7dvKdloyz62xLvZF2" placeholder="Enter Alice's Auth UID">
+    <p class="note">This UID is used to create exchange records referencing Alice's books correctly.</p>
+  </div>
+
+  <div class="section">
+    <p style="font-size:14px;color:#374151;">Create <strong>Bob</strong>:</p>
+    <table>
+      <tr><td>Email</td><td><input id="bobEmail" type="email" value="bob_reads@iraval.test" style="margin:0"></td></tr>
+      <tr><td>Password</td><td><input id="bobPassword" type="password" value="Test123456!" style="margin:0"></td></tr>
+    </table>
+    <button id="bobBtn" onclick="createUser('bob')">Create Bob</button>
+  </div>
+
+  <div class="section">
+    <p style="font-size:14px;color:#374151;">Create <strong>Carol</strong>:</p>
+    <table>
+      <tr><td>Email</td><td><input id="carolEmail" type="email" value="carol_pages@iraval.test" style="margin:0"></td></tr>
+      <tr><td>Password</td><td><input id="carolPassword" type="password" value="Test123456!" style="margin:0"></td></tr>
+    </table>
+    <button id="carolBtn" onclick="createUser('carol')">Create Carol</button>
+  </div>
+
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    function log(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      document.getElementById('log').appendChild(el);
+    }
+
+    function deterministicId(title) {
+      return title.replace(/[^a-zA-Z0-9]/g, '_') + '_book';
+    }
+
+    // Clean up stale exchanges where this user is the sender only
+    // (Don't touch exchanges where the user is the receiver — those belong to the other user)
+    async function cleanExchanges(userUid, adminUid) {
+      const q = query(collection(db, 'exchanges'), where('senderId', '==', userUid));
+      const snap = await getDocs(q);
+
+      const toDelete = [];
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.senderId === adminUid || data.receiverId === adminUid) {
+          toDelete.push(d.id);
+        }
+      });
+
+      if (toDelete.length > 0) {
+        for (const id of toDelete) {
+          await deleteDoc(doc(db, 'exchanges', id));
+          log(`  Deleted stale exchange: ${id}`, 'warn');
+        }
+      }
+      return toDelete.length;
+    }
+
+    window.createUser = async function(userType) {
+      const adminUid = document.getElementById('adminUid').value.trim();
+      const config = userType === 'bob'
+        ? {
+            email: 'bob_reads@iraval.test', password: 'Test123456!',
+            fullName: 'Bob Smith', birthDate: '1988-11-22',
+            zipCode: '94101', city: 'San Francisco',
+            books: [
+              { title: 'Dune', author: 'Frank Herbert' },
+              { title: 'The Hobbit', author: 'J.R.R. Tolkien' },
+            ],
+          }
+        : {
+            email: 'carol_pages@iraval.test', password: 'Test123456!',
+            fullName: 'Carol Davis', birthDate: '1992-03-08',
+            zipCode: '60601', city: 'Chicago',
+            books: [
+              { title: 'Pride and Prejudice', author: 'Jane Austen' },
+              { title: 'The Catcher in the Rye', author: 'J.D. Salinger' },
+              { title: 'Brave New World', author: 'Aldous Huxton' },
+            ],
+          };
+      const email = document.getElementById(`${userType}Email`).value.trim();
+      const password = document.getElementById(`${userType}Password`).value;
+      const btn = document.getElementById(`${userType}Btn`);
+
+      if (!adminUid) {
+        log(`❌ Enter Alice's Auth UID in the field above.`, 'fail');
+        return;
+      }
+      if (!email || !password) {
+        log(`❌ Enter email and password for ${userType}.`, 'fail');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = `Creating ${userType.charAt(0).toUpperCase() + userType.slice(1)}...`;
+      log(`\n=== Creating ${userType.toUpperCase()}'s Account ===`, 'run');
+
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+        log(`✓ Signed in as ${email}`, 'ok');
+
+        const uid = auth.currentUser.uid;
+        log(`  Auth UID: ${uid}`, 'run');
+
+        // Clean up stale exchanges between this user and admin
+        log('🧹 Cleaning up stale exchanges...', 'run');
+        const cleaned = await cleanExchanges(uid, adminUid);
+        log(`  Cleaned ${cleaned} stale exchange(s)`, 'ok');
+
+        // Create user document
+        const username = userType === 'bob' ? 'bob_reads' : 'carol_pages';
+        await setDoc(doc(db, 'users', uid), {
+          uid, username, fullName: config.fullName, email,
+          birthDate: config.birthDate, zipCode: config.zipCode,
+          city: config.city, profileImageURL: '', createdAt: serverTimestamp(),
+        }, { merge: true });
+        log(`✓ User document: users/${uid}`, 'ok');
+
+        // Clean up legacy books
+        log('📚 Creating books...', 'run');
+        const oldBooksSnap = await getDocs(collection(db, 'users', uid, 'books'));
+        let oldCount = 0;
+        for (const d of oldBooksSnap.docs) {
+          const data = d.data();
+          const expected = deterministicId(data.title);
+          if (d.id !== expected) {
+            await deleteDoc(doc(db, 'users', uid, 'books', d.id));
+            log(`  ✗ Deleted legacy: "${data.title}" (ID: ${d.id})`, 'fail');
+            oldCount++;
+          }
+        }
+        log(`  Cleaned ${oldCount} legacy book(s)`, 'ok');
+
+        // Create books with deterministic IDs (idempotent)
+        const bookIds = {};
+        for (const book of config.books) {
+          const bookId = deterministicId(book.title);
+          await setDoc(doc(db, 'users', uid, 'books', bookId), {
+            ...book, addedBy: uid, coverImageURL: '', addedAt: serverTimestamp(),
+          }, { merge: true });
+          bookIds[book.title] = bookId;
+          log(`  ✓ ${book.title} (ID: ${bookId})`, 'ok');
+        }
+
+        // Create exchanges using correct UIDs
+        // Note: The reverse exchanges (admin -> this user) were created by seed-all.html
+        // and will match via title lookup since the bookId points to admin's books
+
+        if (userType === 'bob') {
+          // Bob -> Alice: Bob offers Dune (accepted)
+          await setDoc(doc(db, 'exchanges', `ex_${uid}_${adminUid}_1`), {
+            senderId: uid, receiverId: adminUid,
+            bookId: bookIds['Dune'], bookTitle: 'Dune', bookAuthor: 'Frank Herbert',
+            status: 'accepted', requestedAt: serverTimestamp(),
+          }, { merge: true });
+          log(`  ✓ Bob -> Alice: bookId=${bookIds['Dune']}`, 'ok');
+        }
+
+        if (userType === 'carol') {
+          // Carol -> Alice: Carol offers Pride and Prejudice (pending)
+          await setDoc(doc(db, 'exchanges', `ex_${uid}_${adminUid}_1`), {
+            senderId: uid, receiverId: adminUid,
+            bookId: bookIds['Pride and Prejudice'], bookTitle: 'Pride and Prejudice', bookAuthor: 'Jane Austen',
+            status: 'pending', requestedAt: serverTimestamp(),
+          }, { merge: true });
+          log(`  ✓ Carol -> Alice: bookId=${bookIds['Pride and Prejudice']}`, 'ok');
+        }
+
+        log(`\n✅ ${userType.charAt(0).toUpperCase() + userType.slice(1)} is ready!`, 'ok');
+        log('  Next: Run cleanup.html to deduplicate books', 'run');
+
+      } catch (err) {
+        log(`❌ Error for ${userType}: ${err.message}`, 'fail');
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = `Create ${userType.charAt(0).toUpperCase() + userType.slice(1)}`;
+      }
+    };
+  </script>
+</body>
+</html>

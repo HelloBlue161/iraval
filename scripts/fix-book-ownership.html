@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fix Book Ownership</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #dc2626; }
+    .status { padding: 10px 14px; margin: 6px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; font-size: 14px; }
+    .status.ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .status.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .status.run { border-left-color: #3b82f6; background: #eff6ff; }
+    .status.warn { border-left-color: #f59e0b; background: #fffbeb; }
+    button { background: #dc2626; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; cursor: pointer; margin: 4px; }
+    button:hover:not(:disabled) { background: #b91c1c; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .section { background: white; padding: 16px; margin: 16px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .note { font-size: 13px; color: #6b7280; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Fix Book Ownership (Manual)</h1>
+  <div class="section">
+    <p><strong>Step 1:</strong> Open the Firestore Rules Editor below, copy the rules, and publish.</p>
+    <p><strong>Step 2:</strong> Run the fix script below.</p>
+    <p><strong>Step 3:</strong> Restore the original rules after fixing.</p>
+  </div>
+  <div class="section">
+    <label>Firestore Rules (Publish this first):</label>
+    <textarea id="rules" rows="12" style="width:100%;padding:10px;font-family:monospace;font-size:13px;border:1px solid #ccc;border-radius:6px;resize:vertical;margin-top:6px;">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == 'JcB80FJfvjR7dvKdloyz62xLvZF2');
+    }
+    match /users/{userId}/books/{bookId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == 'JcB80FJfvjR7dvKdloyz62xLvZF2');
+    }
+    match /friendRequests/{requestId} {
+      allow create: if request.auth != null;
+      allow read, update, delete: if request.auth != null
+        && (request.auth.uid == resource.data.senderId
+            || request.auth.uid == resource.data.receiverId);
+    }
+    match /chats/{chatId} {
+      allow read, write: if request.auth != null;
+      match /messages/{messageId} {
+        allow read, write: if request.auth != null;
+      }
+    }
+    match /exchanges/{exchangeId} {
+      allow create: if request.auth != null;
+      allow read, update, delete: if request.auth != null
+        && (request.auth.uid == resource.data.senderId
+            || request.auth.uid == resource.data.receiverId);
+    }
+    match /recoveryCodes/{codeId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}</textarea>
+  </div>
+  <div class="section">
+    <label>Then run this fix:</label>
+    <button id="fixBtn" onclick="fixBooks()">Run Fix Script</button>
+  </div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, doc, getDoc, getDocs, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    const ADMIN_UID = 'JcB80FJfvjR7dvKdloyz62xLvZF2'; // Alice's Auth UID
+
+    function log(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      document.getElementById('log').appendChild(el);
+    }
+
+    window.fixBooks = async function() {
+      const btn = document.getElementById('fixBtn');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+      document.getElementById('log').innerHTML = '';
+
+      try {
+        // Sign in as Alice
+        log('🔐 Signing in...', 'run');
+        await signInWithEmailAndPassword(auth, 'alice_books@iraval.test', 'Test123456!');
+        log(`✓ Signed in as ${auth.currentUser.email} (Auth UID: ${auth.currentUser.uid})`, 'ok');
+
+        if (auth.currentUser.uid !== ADMIN_UID) {
+          log(`⚠️  WARNING: Auth UID mismatch. Expected ${ADMIN_UID}, got ${auth.currentUser.uid}`, 'fail');
+          log('Make sure you logged in as alice_books@iraval.test', 'fail');
+          return;
+        }
+
+        // Get all user documents
+        const usersSnap = await getDocs(collection(db, 'users'));
+        log(`\n📋 Found ${usersSnap.docs.length} user documents`, 'run');
+
+        // Build map: Auth UID → username
+        const authUidToUsername = {};
+        for (const userDoc of usersSnap.docs) {
+          const data = userDoc.data();
+          if (data.uid && data.uid === userDoc.id) {
+            authUidToUsername[userDoc.id] = data.username;
+            log(`  ✓ ${data.username} → Auth UID: ${userDoc.id}`, 'ok');
+          }
+        }
+
+        // Find all books with wrong ownership
+        let totalBooks = 0;
+        let fixed = 0;
+
+        for (const userDoc of usersSnap.docs) {
+          const userData = userDoc.data();
+          const username = userData.username;
+          const authUid = authUidToUsername[userDoc.id];
+
+          if (!authUid) continue; // Skip legacy docs
+
+          const booksSnap = await getDocs(collection(db, 'users', userDoc.id, 'books'));
+
+          for (const bookDoc of booksSnap.docs) {
+            const bookData = bookDoc.data();
+            totalBooks++;
+            const addedBy = bookData.addedBy;
+
+            // Check if addedBy matches the document's Auth UID
+            if (addedBy !== authUid) {
+              // Fix: update addedBy to match the document owner
+              await updateDoc(doc(db, 'users', userDoc.id, 'books', bookDoc.id), {
+                addedBy: authUid,
+              });
+              log(`  ✓ "${bookData.title}" (${bookDoc.id}): fixed addedBy ${addedBy} → ${authUid} (${username})`, 'ok');
+              fixed++;
+            }
+          }
+        }
+
+        log(`\n✅ Done! Fixed ${fixed} of ${totalBooks} books`, 'ok');
+        log('\n📋 IMPORTANT: After verifying the fix, restore the original Firestore rules!', 'warn');
+        log('The updated rules allow Alice to write to any user document. Restore after fixing.', 'warn');
+      } catch (err) {
+        log(`❌ Error: ${err.message}`, 'fail');
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Fix Script';
+      }
+    };
+  </script>
+</body>
+</html>

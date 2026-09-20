@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diagnose Duplicates</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #3b82f6; }
+    .status { padding: 10px 14px; margin: 6px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; font-size: 14px; font-family: monospace; }
+    .status.ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .status.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .status.run { border-left-color: #3b82f6; background: #eff6ff; }
+    .status.warn { border-left-color: #f59e0b; background: #fffbeb; }
+    button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; cursor: pointer; margin: 4px; }
+    button:hover:not(:disabled) { background: #2563eb; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .section { background: white; padding: 16px; margin: 16px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+    th, td { border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; }
+    th { background: #f9fafb; font-weight: 600; }
+    tr:nth-child(even) { background: #f9fafb; }
+    .dup { background: #fef2f2 !important; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Diagnose Duplicate Books</h1>
+  <div class="section">
+    <button id="diagBtn" onclick="runDiag()">Run Diagnostic</button>
+  </div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, getDoc, getDocs, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    function log(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      document.getElementById('log').appendChild(el);
+    }
+
+    function addTable(headers, rows) {
+      const section = document.createElement('div');
+      section.className = 'section';
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+      headers.forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        if (r.duplicate) tr.className = 'dup';
+        r.cells.forEach(c => {
+          const td = document.createElement('td');
+          td.textContent = c;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      section.appendChild(table);
+      document.getElementById('log').appendChild(section);
+    }
+
+    window.runDiag = async function() {
+      const btn = document.getElementById('diagBtn');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+      document.getElementById('log').innerHTML = '';
+
+      try {
+        log('🔐 Signing in...', 'run');
+        await signInWithEmailAndPassword(auth, 'alice_books@iraval.test', 'Test123456!');
+        log(`✓ Signed in as ${auth.currentUser.email}`, 'ok');
+
+        // Get all user documents
+        const usersSnap = await getDocs(collection(db, 'users'));
+        log(`\n📋 Found ${usersSnap.docs.length} user documents`, 'run');
+
+        // For each user, list all books
+        const allBooks = []; // { userDocId, username, bookDocId, title, author, addedBy }
+        let totalBooks = 0;
+
+        for (const userDoc of usersSnap.docs) {
+          const userData = userDoc.data();
+          const username = userData.username;
+          const authUid = userData.uid || userDoc.id;
+
+          const booksSnap = await getDocs(collection(db, 'users', userDoc.id, 'books'));
+          log(`  ${username} (${userDoc.id}): ${booksSnap.docs.length} books`, 'run');
+
+          for (const bookDoc of booksSnap.docs) {
+            const bookData = bookDoc.data();
+            totalBooks++;
+            allBooks.push({
+              userDocId: userDoc.id,
+              username,
+              bookDocId: bookDoc.id,
+              title: bookData.title || '(no title)',
+              author: bookData.author || '(no author)',
+              addedBy: bookData.addedBy || '(none)',
+            });
+          }
+        }
+
+        log(`\n📚 Total books across all users: ${totalBooks}`, 'ok');
+
+        // Find duplicates: same (title, author) with different doc IDs
+        const titleAuthorMap = {};
+        allBooks.forEach(b => {
+          const key = `${b.title.toLowerCase()}||${(b.author || '').toLowerCase()}`;
+          if (!titleAuthorMap[key]) titleAuthorMap[key] = [];
+          titleAuthorMap[key].push(b);
+        });
+
+        const duplicates = Object.entries(titleAuthorMap)
+          .filter(([key, books]) => books.length > 1)
+          .map(([key, books]) => ({ key, books }));
+
+        if (duplicates.length === 0) {
+          log('\n✅ No duplicate (title, author) pairs found across ALL users', 'ok');
+        } else {
+          log(`\n⚠️  Found ${duplicates.length} duplicate (title, author) pairs`, 'warn');
+
+          // For each user, find their internal duplicates
+          const userInternalDupes = {};
+          for (const book of allBooks) {
+            const key = `${book.title.toLowerCase()}||${(book.author || '').toLowerCase()}`;
+            if (!userInternalDupes[book.username]) userInternalDupes[book.username] = [];
+            userInternalDupes[book.username].push({ key, book });
+          }
+
+          for (const [username, entries] of Object.entries(userInternalDupes)) {
+            const dupeMap = {};
+            entries.forEach(e => {
+              if (!dupeMap[e.key]) dupeMap[e.key] = [];
+              dupeMap[e.key].push(e.book);
+            });
+
+            const userDupes = Object.entries(dupeMap).filter(([k, books]) => books.length > 1);
+            if (userDupes.length > 0) {
+              log(`\n  🔴 ${username} has internal duplicates:`, 'fail');
+              for (const [key, books] of userDupes) {
+                log(`    "${books[0].title}" appears ${books.length} times (doc IDs differ):`, 'fail');
+                books.forEach(b => log(`      ${b.bookDocId} (addedBy: ${b.addedBy})`, 'fail'));
+              }
+            }
+          }
+
+          // Show cross-user duplicates (expected for search results)
+          const crossUser = duplicates.filter(d => {
+            const users = new Set(d.books.map(b => b.username));
+            return users.size > 1;
+          });
+          if (crossUser.length > 0) {
+            log(`\n  ℹ️  ${crossUser.length} duplicates across different users (normal for search):`, 'warn');
+            crossUser.slice(0, 5).forEach(d => {
+              const users = [...new Set(d.books.map(b => b.username))];
+              log(`    "${d.books[0].title}" by ${users.join(', ')}`, 'warn');
+            });
+          }
+        }
+
+        // Show the exact "Dune" books
+        const duneBooks = allBooks.filter(b => b.title.toLowerCase().includes('dune'));
+        if (duneBooks.length > 0) {
+          log(`\n📖 All "Dune" books found:`, 'run');
+          addTable(
+            ['User', 'Doc ID', 'Title', 'Author', 'addedBy'],
+            duneBooks.map(b => ({
+              cells: [b.username, b.bookDocId, b.title, b.author, b.addedBy],
+              duplicate: false,
+            }))
+          );
+        }
+
+        // Show dedup simulation
+        log('\n🔍 Simulating search dedup (like SearchView.tsx does):', 'run');
+        const seen = new Set();
+        let uniqueCount = 0;
+        for (const userDoc of usersSnap.docs) {
+          const booksSnap = await getDocs(collection(db, 'users', userDoc.id, 'books'));
+          for (const bookDoc of booksSnap.docs) {
+            const bookData = bookDoc.data();
+            const dedupKey = `${userDoc.id}::${bookDoc.id}`;
+            if (seen.has(dedupKey)) {
+              log(`  DUPE: ${bookData.title} (${bookDoc.id}) under ${userDoc.id}`, 'fail');
+            } else {
+              seen.add(dedupKey);
+              uniqueCount++;
+            }
+          }
+        }
+        log(`  After dedup: ${uniqueCount} unique books (was ${totalBooks})`, uniqueCount === totalBooks ? 'ok' : 'warn');
+        if (uniqueCount !== totalBooks) {
+          log(`  ❌ ${totalBooks - uniqueCount} duplicates remain in database (same user, different doc IDs)!`, 'fail');
+        }
+
+      } catch (err) {
+        log(`❌ Error: ${err.message}`, 'fail');
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Diagnostic';
+      }
+    };
+  </script>
+</body>
+</html>

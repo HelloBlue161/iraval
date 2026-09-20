@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UID8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Firestore Rules</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #3b82f6; }
+    .status { padding: 10px 14px; margin: 6px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; font-size: 14px; font-family: monospace; }
+    .status.ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .status.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .status.run { border-left-color: #3b82f6; background: #eff6ff; }
+    button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; cursor: pointer; margin: 4px; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <h1>Test Firestore Rules</h1>
+  <button id="testBtn" onclick="testRules()">Run Tests</button>
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, getDocs, doc, deleteDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    function log(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      document.getElementById('log').appendChild(el);
+    }
+
+    window.testRules = async function() {
+      const btn = document.getElementById('testBtn');
+      btn.disabled = true;
+      btn.textContent = 'Testing...';
+      document.getElementById('log').innerHTML = '';
+
+      try {
+        // Test 1: Sign in
+        log('1️⃣ Signing in as alice_books@iraval.test...', 'run');
+        await signInWithEmailAndPassword(auth, 'alice_books@iraval.test', 'Test123456!');
+        log(`   ✓ Auth UID: ${auth.currentUser.uid}`, 'ok');
+
+        // Test 2: Read users collection
+        log('2️⃣ Reading /users collection...', 'run');
+        const usersSnap = await getDocs(collection(db, 'users'));
+        log(`   ✓ Read ${usersSnap.docs.length} user docs`, 'ok');
+
+        // Test 3: Read books of a specific user
+        log('3️⃣ Reading books of user_bob...', 'run');
+        const bobBooks = await getDocs(collection(db, 'users', 'user_bob', 'books'));
+        log(`   ✓ Read ${bobBooks.docs.length} books`, 'ok');
+
+        // Test 4: Try to delete a user document (key test)
+        log('4️⃣ Trying to DELETE user document...', 'run');
+        try {
+          await deleteDoc(doc(db, 'users', 'user_test_temp'));
+          log('   ✗ Deleted (but doc probably does not exist)', 'ok');
+        } catch (e) {
+          log(`   ❌ DELETE USER DOC BLOCKED: ${e.message}`, 'fail');
+        }
+
+        // Test 5: Try to write to a user document (key test)
+        log('5️⃣ Trying to WRITE to user_bob document...', 'run');
+        try {
+          await setDoc(doc(db, 'users', '1j1bLY8YynhkYS6hwB4PP3bs9dM2'),
+            { _test: true }, { merge: true });
+          log('   ✓ Write to user doc ALLOWED', 'ok');
+        } catch (e) {
+          log(`   ❌ WRITE USER DOC BLOCKED: ${e.message}`, 'fail');
+        }
+
+        // Test 6: Try to write to books subcollection
+        log('6️⃣ Trying to WRITE to /users/1j1bLY.../books/test...', 'run');
+        try {
+          await setDoc(doc(db, 'users', '1j1bLY8YynhkYS6hwB4PP3bs9dM2', 'books', '_test_temp'),
+            { title: 'test', author: 'test', addedBy: 'bob_reads' });
+          log('   ✓ Write to books subcollection ALLOWED', 'ok');
+          // Clean up
+          await deleteDoc(doc(db, 'users', '1j1bLY8YynhkYS6hwB4PP3bs9dM2', 'books', '_test_temp'));
+          log('   ✓ Deleted test doc', 'ok');
+        } catch (e) {
+          log(`   ❌ WRITE BOOKS SUBCOLLECTION BLOCKED: ${e.message}`, 'fail');
+        }
+
+        // Test 7: Try to delete a book
+        log('7️⃣ Trying to DELETE a book doc...', 'run');
+        try {
+          await deleteDoc(doc(db, 'users', '1j1bLY8YynhkYS6hwB4PP3bs9dM2', 'books', 'Dune_book'));
+          log('   ✓ Delete book ALLOWED', 'ok');
+          // Put it back
+          await setDoc(doc(db, 'users', '1j1bLY8YynhkYS6hwB4PP3bs9dM2', 'books', 'Dune_book'),
+            { title: 'Dune', author: 'Frank Herbert', addedBy: 'bob_reads' });
+          log('   ✓ Restored Dune_book', 'ok');
+        } catch (e) {
+          log(`   ❌ DELETE BOOK BLOCKED: ${e.message}`, 'fail');
+        }
+
+      } catch (err) {
+        log(`❌ Error: ${err.message}`, 'fail');
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Tests';
+      }
+    };
+  </script>
+</body>
+</html>

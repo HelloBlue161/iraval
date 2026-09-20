@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iraval — Deduplicate Books</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #dc2626; }
+    .status { padding: 10px 14px; margin: 6px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; font-size: 14px; }
+    .status.ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .status.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .status.run { border-left-color: #3b82f6; background: #eff6ff; }
+    .status.warn { border-left-color: #f59e0b; background: #fffbeb; }
+    button { background: #dc2626; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; cursor: pointer; margin: 4px; }
+    button:hover:not(:disabled) { background: #b91c1c; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .section { background: white; padding: 16px; margin: 16px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    label { font-weight: 600; font-size: 14px; display: block; margin-top: 8px; }
+    input { width: 100%; padding: 10px; margin: 6px 0 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+    .summary { background: #fef2f2; border: 1px solid #fca5a5; padding: 12px; border-radius: 6px; margin-top: 12px; }
+    .summary strong { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <h1>Deduplicate Books</h1>
+  <p>Sign in, find duplicate books (same title + author), keep the first one, delete the rest, and fix exchange references.</p>
+
+  <div class="section">
+    <label>Email</label>
+    <input id="email" type="email" value="alice_books@iraval.test">
+    <label>Password</label>
+    <input id="password" type="password" value="Test123456!">
+    <button id="cleanupBtn" onclick="runCleanup()">Run Cleanup</button>
+  </div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, doc, getDocs, deleteDoc, updateDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    function log(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      document.getElementById('log').appendChild(el);
+    }
+
+    window.runCleanup = async function() {
+      const btn = document.getElementById('cleanupBtn');
+      btn.disabled = true;
+      btn.textContent = 'Cleaning up...';
+      document.getElementById('log').innerHTML = '';
+
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!email || !password) {
+        log('❌ Enter email and password.', 'fail');
+        btn.disabled = false;
+        btn.textContent = 'Run Cleanup';
+        return;
+      }
+
+      try {
+        log('🔐 Signing in...', 'run');
+        await signInWithEmailAndPassword(auth, email, password);
+        log('✓ Signed in', 'ok');
+
+        const uid = auth.currentUser.uid;
+        log(`UID: ${uid}`, 'run');
+
+        // Fetch all books
+        log('📚 Fetching books...', 'run');
+        const booksSnap = await getDocs(collection(db, 'users', uid, 'books'));
+        if (booksSnap.empty) {
+          log('No books found. Nothing to clean up.', 'warn');
+          btn.disabled = false;
+          btn.textContent = 'Run Cleanup';
+          return;
+        }
+
+        const allBooks = [];
+        booksSnap.forEach((d) => {
+          allBooks.push({ id: d.id, ...d.data() });
+        });
+        log(`  Found ${allBooks.length} book(s)`, 'run');
+
+        // Group by title + author to find duplicates
+        const grouped = new Map();
+        for (const book of allBooks) {
+          const key = `${(book.title || '').toLowerCase()}|${(book.author || '').toLowerCase()}`;
+          if (!grouped.has(key)) grouped.set(key, []);
+          grouped.get(key).push(book);
+        }
+
+        const keptIds = new Set();
+        const deletedEntries = [];
+        let totalDeleted = 0;
+
+        for (const [key, books] of grouped) {
+          if (books.length <= 1) {
+            keptIds.add(books[0].id);
+            continue;
+          }
+
+          const title = books[0].title;
+          const author = books[0].author;
+          log(`  ⚠️  Found ${books.length} duplicates: "${title}" by ${author}`, 'warn');
+
+          keptIds.add(books[0].id);
+          log(`    ✓ Keeping: ${books[0].id}`, 'ok');
+
+          for (let i = 1; i < books.length; i++) {
+            const dup = books[i];
+            deletedEntries.push({
+              deletedId: dup.id,
+              keptId: books[0].id,
+              title: title,
+              author: author,
+            });
+            totalDeleted++;
+            log(`    ✗ Delete: ${dup.id}`, 'fail');
+          }
+        }
+
+        if (totalDeleted === 0) {
+          log('✅ No duplicates found!', 'ok');
+        } else {
+          // Delete duplicates
+          log('\n🗑️  Deleting duplicates...', 'run');
+          for (const entry of deletedEntries) {
+            try {
+              await deleteDoc(doc(db, 'users', uid, 'books', entry.deletedId));
+              log(`  ✓ Deleted: ${entry.deletedId}`, 'ok');
+            } catch (err) {
+              log(`  ✗ Failed: ${entry.deletedId}: ${err.message}`, 'fail');
+            }
+          }
+
+          // Update exchange records pointing to deleted book IDs
+          log('\n🔄 Updating exchange references...', 'run');
+          const exQ1 = query(collection(db, 'exchanges'), where('senderId', '==', uid));
+          const exQ2 = query(collection(db, 'exchanges'), where('receiverId', '==', uid));
+          const [exS1, exS2] = await Promise.all([getDocs(exQ1), getDocs(exQ2)]);
+
+          const allEx = [];
+          const seen = new Set();
+          exS1.forEach(d => { if (!seen.has(d.id)) { seen.add(d.id); allEx.push({ id: d.id, ...d.data() }); } });
+          exS2.forEach(d => { if (!seen.has(d.id)) { seen.add(d.id); allEx.push({ id: d.id, ...d.data() }); } });
+
+          let exchangesUpdated = 0;
+          let exchangesFailed = 0;
+
+          for (const ex of allEx) {
+            const entry = deletedEntries.find(d => d.deletedId === ex.bookId);
+            if (entry) {
+              try {
+                await updateDoc(doc(db, 'exchanges', ex.id), {
+                  bookId: entry.keptId,
+                });
+                log(`  ✓ Exchange ${ex.id}: ${ex.bookId} -> ${entry.keptId}`, 'ok');
+                exchangesUpdated++;
+              } catch (err) {
+                log(`  ✗ Failed exchange ${ex.id}: ${err.message}`, 'fail');
+                exchangesFailed++;
+              }
+            }
+          }
+          log(`  Updated ${exchangesUpdated} exchange(s)`, 'ok');
+          if (exchangesFailed > 0) {
+            log(`  Failed ${exchangesFailed} exchange(s)`, 'fail');
+          }
+
+          log('\n=== SUMMARY ===', 'run');
+          log(`Books before:   ${allBooks.length}`, 'run');
+          log(`Unique kept:    ${keptIds.size}`, 'ok');
+          log(`Duplicates removed: ${totalDeleted}`, 'fail');
+          log(`Exchanges updated: ${exchangesUpdated}`, exchangesFailed > 0 ? 'fail' : 'ok');
+          log('✅ Done!', 'ok');
+        }
+
+      } catch (err) {
+        log(`❌ Error: ${err.message}`, 'fail');
+        console.error(err);
+      } finally {
+        try { await signOut(auth); } catch {}
+        btn.disabled = false;
+        btn.textContent = 'Run Cleanup';
+      }
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Merge Duplicate User Documents</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #3b82f6; }
+    .status { padding: 10px 14px; margin: 6px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; font-size: 14px; font-family: monospace; white-space: pre-wrap; }
+    .status.ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .status.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .status.run { border-left-color: #3b82f6; background: #eff6ff; }
+    .status.warn { border-left-color: #f59e0b; background: #fffbeb; }
+    button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; cursor: pointer; margin: 4px; }
+    button:hover:not(:disabled) { background: #2563eb; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .section { background: white; padding: 16px; margin: 16px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  </style>
+</head>
+<body>
+  <h1>Merge Duplicate User Documents</h1>
+  <div class="section">
+    <p><strong>Problem:</strong> Each user has TWO documents with books under both.</p>
+    <button id="mergeBtn" onclick="mergeUsers()">Run Merge</button>
+  </div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, getDocs, doc, deleteDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    function log(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      document.getElementById('log').appendChild(el);
+    }
+
+    window.mergeUsers = async function() {
+      const btn = document.getElementById('mergeBtn');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+      document.getElementById('log').innerHTML = '';
+
+      try {
+        log('🔐 Signing in...', 'run');
+        await signInWithEmailAndPassword(auth, 'alice_books@iraval.test', 'Test123456!');
+        log(`✓ Signed in as ${auth.currentUser.email} (Auth UID: ${auth.currentUser.uid})`, 'ok');
+
+        // Step 1: Get all user documents
+        const usersSnap = await getDocs(collection(db, 'users'));
+        log(`\n📋 Found ${usersSnap.docs.length} user documents`, 'run');
+
+        // Step 2: Build map: username → { authUidDoc, usernameDoc }
+        const userMap = {};
+        for (const userDoc of usersSnap.docs) {
+          const data = userDoc.data();
+          const username = data.username;
+          if (!userMap[username]) userMap[username] = { authUidDoc: null, usernameDoc: null };
+
+          if (data.uid && data.uid === userDoc.id) {
+            userMap[username].authUidDoc = userDoc;
+          } else if (userDoc.id.startsWith('user_')) {
+            userMap[username].usernameDoc = userDoc;
+          }
+        }
+
+        let totalDeleted = 0;
+
+        // Step 3: For each user with a username doc, merge books
+        for (const [username, map] of Object.entries(userMap)) {
+          if (!map.usernameDoc) {
+            log(`  ${username}: only Auth UID doc (OK)`, 'ok');
+            continue;
+          }
+          if (!map.authUidDoc) {
+            log(`  ${username}: Auth UID doc missing, skipping`, 'warn');
+            continue;
+          }
+
+          log(`\n  🔀 Processing ${username}:`, 'run');
+
+          // Read books from BOTH documents
+          const usernameBooksSnap = await getDocs(collection(db, 'users', map.usernameDoc.id, 'books'));
+          const authBooksSnap = await getDocs(collection(db, 'users', map.authUidDoc.id, 'books'));
+
+          // Build a title→book map from Auth UID doc (prefer Auth UID version)
+          const titleToBook = {};
+          for (const b of authBooksSnap.docs) {
+            const key = b.data().title.toLowerCase();
+            if (!titleToBook[key]) titleToBook[key] = { id: b.id, data: b.data() };
+          }
+
+          // For each book in username doc, if title already exists in Auth UID doc,
+          // delete the Auth UID copy (so username version takes over — it has correct addedBy)
+          const toDeleteFromAuth = [];
+          for (const b of usernameBooksSnap.docs) {
+            const key = b.data().title.toLowerCase();
+            if (titleToBook[key]) {
+              toDeleteFromAuth.push(titleToBook[key].id);
+            }
+          }
+
+          // Delete duplicates from Auth UID doc
+          for (const docId of toDeleteFromAuth) {
+            const bData = authBooksSnap.docs.find(d => d.id === docId)?.data();
+            await deleteDoc(doc(db, 'users', map.authUidDoc.id, 'books', docId));
+            log(`    ✗ Deleted "${bData?.title}" (${docId}) from Auth UID doc (duplicate of username doc)`, 'warn');
+          }
+
+          // Move username doc books to Auth UID doc
+          for (const b of usernameBooksSnap.docs) {
+            const { _docId, ...bookData } = b.data();
+            await setDoc(
+              doc(db, 'users', map.authUidDoc.id, 'books', b.id),
+              bookData,
+              { merge: true }
+            );
+            log(`    → Moved "${b.data().title}" (${b.id}) to Auth UID doc`, 'ok');
+          }
+
+          // Delete username document
+          await deleteDoc(doc(db, 'users', map.usernameDoc.id));
+          totalDeleted++;
+          log(`    ✓ Deleted username doc (${map.usernameDoc.id})`, 'ok');
+        }
+
+        // Step 4: Verify
+        const verifySnap = await getDocs(collection(db, 'users'));
+        log(`\n✅ Done! Deleted ${totalDeleted} duplicate documents`, 'ok');
+        log(`📋 Remaining user documents: ${verifySnap.docs.length}`, 'ok');
+        let grandTotal = 0;
+        for (const d of verifySnap.docs) {
+          const data = d.data();
+          const booksSnap = await getDocs(collection(db, 'users', d.id, 'books'));
+          grandTotal += booksSnap.docs.length;
+          const bookNames = booksSnap.docs.map(b => b.data().title).join(', ');
+          log(`  ${data.username} (${d.id}): ${booksSnap.docs.length} books — ${bookNames}`, 'ok');
+        }
+        log(`📚 Grand total: ${grandTotal} books`, grandTotal === 9 ? 'ok' : 'warn');
+
+      } catch (err) {
+        log(`❌ Error: ${err.message}`, 'fail');
+        console.error(err);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run Merge';
+      }
+    };
+  </script>
+</body>
+</html>

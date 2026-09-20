@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fix User Emails</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #22c55e; }
+    .status { padding: 10px 14px; margin: 6px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; font-size: 14px; }
+    .status.ok { border-left-color: #22c55e; background: #f0fdf4; }
+    .status.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .status.run { border-left-color: #3b82f6; background: #eff6ff; }
+    .status.warn { border-left-color: #f59e0b; background: #fffbeb; }
+    button { background: #22c55e; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 15px; cursor: pointer; margin: 4px; }
+    button:hover:not(:disabled) { background: #16a34a; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .section { background: white; padding: 16px; margin: 16px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    label { font-weight: 600; font-size: 14px; display: block; margin-top: 8px; }
+    input { width: 100%; padding: 10px; margin: 6px 0 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+    .note { font-size: 13px; color: #6b7280; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Fix User Document Emails</h1>
+  <div class="section">
+    <p>Fixes the issue where Alice's document has Bob's email, causing login confusion.</p>
+    <p><strong>This will update Firestore user documents to have the correct email for each username.</strong></p>
+    <button id="fixBtn" onclick="fixEmails()">Fix Emails</button>
+  </div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getFirestore, collection, query, where, getDocs, updateDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Map username -> correct email
+    const USERNAME_EMAIL_MAP = {
+      'alice_books': 'alice_books@iraval.test',
+      'bob_reads': 'bob_reads@iraval.test',
+      'carol_pages': 'carol_pages@iraval.test',
+    };
+
+    function log(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      document.getElementById('log').appendChild(el);
+    }
+
+    window.fixEmails = async function() {
+      const btn = document.getElementById('fixBtn');
+      btn.disabled = true;
+      btn.textContent = 'Fixing...';
+      document.getElementById('log').innerHTML = '';
+
+      try {
+        const usersSnap = await getDocs(collection(db, 'users'));
+        log(`Found ${usersSnap.docs.length} user documents`, 'run');
+
+        let fixed = 0;
+        let skipped = 0;
+
+        for (const userDoc of usersSnap.docs) {
+          const data = userDoc.data();
+          const username = data.username;
+          const currentEmail = data.email;
+          const correctEmail = USERNAME_EMAIL_MAP[username];
+
+          if (!correctEmail) {
+            log(`⊘ No email mapping for username: ${username}`, 'warn');
+            skipped++;
+            continue;
+          }
+
+          if (currentEmail === correctEmail) {
+            log(`✓ ${username} (@${userDoc.id}): email already correct (${currentEmail})`, 'ok');
+            skipped++;
+            continue;
+          }
+
+          // Update the document
+          await updateDoc(doc(db, 'users', userDoc.id), { email: correctEmail });
+          log(`✓ ${username} (@${userDoc.id}): fixed email "${currentEmail}" → "${correctEmail}"`, 'ok');
+          fixed++;
+        }
+
+        log(`\nDone! Fixed: ${fixed}, Already correct: ${skipped}`, 'ok');
+        log('Now refresh the app and log in again.', 'ok');
+      } catch (err) {
+        log(`❌ Error: ${err.message}`, 'fail');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Fix Emails';
+      }
+    };
+  </script>
+</body>
+</html>

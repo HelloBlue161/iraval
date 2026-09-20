@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iraval — Seed Test Data</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    h1 { color: #2563eb; }
+    .status { padding: 12px; margin: 8px 0; border-radius: 6px; background: white; border-left: 4px solid #ccc; }
+    .status.ok { border-left-color: #22c55e; }
+    .status.fail { border-left-color: #ef4444; }
+    .status.warn { border-left-color: #f59e0b; }
+    input { width: 100%; padding: 10px; margin: 6px 0 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+    button { background: #2563eb; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; }
+    button:hover:not(:disabled) { background: #1d4ed8; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .section { background: white; padding: 16px; margin: 16px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    label { font-weight: 600; font-size: 14px; }
+    .hint { color: #64748b; font-size: 13px; margin-bottom: 8px; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; max-height: 300px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <h1>📚 Iraval — Seed Test Data</h1>
+
+  <div class="section">
+    <label>Admin Email</label>
+    <input id="adminEmail" type="email" placeholder="Your admin email (e.g. you@email.com)">
+    <label>Admin Password</label>
+    <input id="adminPassword" type="password" placeholder="Your Firebase Auth password">
+    <p class="hint">These are your Firebase Auth credentials — the same ones you use to log into the app. Used only to authenticate the data seeding.</p>
+    <button id="seedBtn" onclick="seedData()">Sign In & Create Test Data</button>
+  </div>
+
+  <div id="log"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsXJbZ7ksX9UWHpLIU7RBLfGOjsSYb2EA",
+      projectId: "iraval-7733e",
+      storageBucket: "iraval-7733e.firebasestorage.app",
+      messagingSenderId: "249098433505",
+      appId: "1:249098433505:web:694f1a92d7c16eff8758a0",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    const testUsers = [
+      { uid: 'user_alice', username: 'alice_books', fullName: 'Alice Johnson', birthDate: '1990-05-15', zipCode: '10001', city: 'New York' },
+      { uid: 'user_bob', username: 'bob_reads', fullName: 'Bob Smith', birthDate: '1988-11-22', zipCode: '94101', city: 'San Francisco' },
+      { uid: 'user_carol', username: 'carol_pages', fullName: 'Carol Davis', birthDate: '1992-03-08', zipCode: '60601', city: 'Chicago' },
+    ];
+
+    const booksByUser = {
+      user_alice: [
+        { title: 'The Great Gatsby', author: 'F. Scott Fitzgerald' },
+        { title: 'To Kill a Mockingbird', author: 'Harper Lee' },
+        { title: '1984', author: 'George Orwell' },
+      ],
+      user_bob: [
+        { title: 'Dune', author: 'Frank Herbert' },
+        { title: 'The Hobbit', author: 'J.R.R. Tolkien' },
+      ],
+      user_carol: [
+        { title: 'Pride and Prejudice', author: 'Jane Austen' },
+        { title: 'The Catcher in the Rye', author: 'J.D. Salinger' },
+        { title: 'Brave New World', author: 'Aldous Huxley' },
+      ],
+    };
+
+    function log(msg, type = '') {
+      const div = document.getElementById('log');
+      const el = document.createElement('div');
+      el.className = `status ${type}`;
+      el.textContent = msg;
+      div.appendChild(el);
+    }
+
+    window.seedData = async function() {
+      const btn = document.getElementById('seedBtn');
+      btn.disabled = true;
+      btn.textContent = 'Authenticating...';
+      document.getElementById('log').innerHTML = '';
+
+      const email = document.getElementById('adminEmail').value.trim();
+      const password = document.getElementById('adminPassword').value;
+
+      if (!email || !password) {
+        log('Please enter your admin email and password.', 'fail');
+        btn.disabled = false;
+        btn.textContent = 'Sign In & Create Test Data';
+        return;
+      }
+
+      try {
+        // Step 1: Sign in
+        log('Signing in...', '');
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+        log(`✓ Signed in as ${email}`, 'ok');
+
+        // Step 2: Create users
+        log('Creating users...', '');
+        for (const u of testUsers) {
+          await addDoc(collection(db, 'users'), {
+            uid: u.uid,
+            username: u.username,
+            fullName: u.fullName,
+            birthDate: u.birthDate,
+            zipCode: u.zipCode,
+            city: u.city,
+            profileImageURL: '',
+            createdAt: serverTimestamp(),
+          });
+          log(`✓ User: ${u.username} (${u.fullName})`, 'ok');
+        }
+
+        // Step 3: Create books
+        log('Creating books...', '');
+        for (const [userId, books] of Object.entries(booksByUser)) {
+          const userPath = `users/${userId}/books`;
+          for (let i = 0; i < books.length; i++) {
+            await addDoc(collection(db, userPath), {
+              ...books[i],
+              addedBy: userId,
+              coverImageURL: '',
+              addedAt: serverTimestamp(),
+            });
+            log(`✓ Book: ${books[i].title}`, 'ok');
+          }
+        }
+
+        // Step 4: Create friend requests
+        log('Creating friend requests...', '');
+        const friendRequests = [
+          { senderId: 'user_alice', receiverId: 'user_bob', status: 'pending' },
+          { senderId: 'user_bob', receiverId: 'user_alice', status: 'accepted' },
+        ];
+        for (const fr of friendRequests) {
+          await addDoc(collection(db, 'friendRequests'), {
+            ...fr,
+            sentAt: serverTimestamp(),
+          });
+          log(`✓ ${fr.senderId} → ${fr.receiverId} (${fr.status})`, 'ok');
+        }
+
+        // Step 5: Create exchanges
+        log('Creating exchanges...', '');
+        const exchanges = [
+          { bookId: 'bob_dune', bookTitle: 'Dune', bookAuthor: 'Frank Herbert', senderId: 'user_alice', receiverId: 'user_bob', status: 'pending', note: 'I think you will love this!' },
+          { bookId: 'alice_1984', bookTitle: '1984', bookAuthor: 'George Orwell', senderId: 'user_bob', receiverId: 'user_alice', status: 'accepted' },
+        ];
+        for (const ex of exchanges) {
+          await addDoc(collection(db, 'exchanges'), {
+            ...ex,
+            requestedAt: serverTimestamp(),
+          });
+          log(`✓ Exchange: ${ex.senderId} ↔ ${ex.receiverId}`, 'ok');
+        }
+
+        log('✅ All test data created successfully!', 'ok');
+
+      } catch (err) {
+        log(`❌ Error: ${err.message}`, 'fail');
+        console.error(err);
+      } finally {
+        try { await signOut(auth); } catch {}
+        btn.disabled = false;
+        btn.textContent = 'Sign In & Create Test Data';
+      }
+    };
+  </script>
+</body>
+</html>

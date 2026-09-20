@@ -1,0 +1,280 @@
+import React, { useState, useEffect } from 'react';
+import { BookOpen, Check, X, Clock, Tag, MessageSquare, PenLine, Send } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
+import { onUserExchanges, acceptExchange, declineExchange, getUserById } from '../services/firestoreService';
+import type { Exchange, ExchangeStatus, User } from '../types';
+import ChatView from './ChatView';
+
+export default function MyExchangesView() {
+  const { user } = useAuth();
+  const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
+  const [exchanges, setExchanges] = useState<Exchange[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [recipientNames, setRecipientNames] = useState<Record<string, string>>({});
+  const [senderNames, setSenderNames] = useState<Record<string, string>>({});
+  const [chatUser, setChatUser] = useState<User | null>(null);
+  const [showChat, setShowChat] = useState(false);
+  const [declineModal, setDeclineModal] = useState<string | null>(null);
+  const [declineNote, setDeclineNote] = useState('');
+
+  useEffect(() => {
+    if (!user) return;
+
+    const unsub = onUserExchanges(user.uid, (exs) => {
+      setExchanges(exs);
+      setLoading(false);
+
+      exs.forEach((ex) => {
+        if (!recipientNames[ex.receiverId] && ex.senderId === user.uid) {
+          getUserById(ex.receiverId).then((u) => {
+            if (u) setRecipientNames((prev) => ({ ...prev, [ex.receiverId]: u.fullName }));
+          });
+        }
+        if (!senderNames[ex.senderId] && ex.receiverId === user.uid) {
+          getUserById(ex.senderId).then((u) => {
+            if (u) setSenderNames((prev) => ({ ...prev, [ex.senderId]: u.fullName }));
+          });
+        }
+      });
+    });
+
+    return unsub;
+  }, [user]);
+
+  const handleAccept = async (id: string) => {
+    try {
+      await acceptExchange(id);
+      toastSuccess('Exchange accepted! You can now chat to coordinate.');
+    } catch {
+      toastError('Failed to accept exchange.');
+    }
+  };
+
+  const openDecline = (id: string) => {
+    setDeclineModal(id);
+    setDeclineNote('');
+  };
+
+  const handleDecline = async (id: string) => {
+    try {
+      const noteToUse = declineNote.trim() || undefined;
+      await declineExchange(id, noteToUse);
+      setDeclineModal(null);
+      setDeclineNote('');
+
+      if (noteToUse) {
+        toastInfo('Declined with note saved to the request.');
+      } else {
+        toastInfo('Exchange declined.');
+      }
+    } catch {
+      toastError('Failed to decline exchange.');
+    }
+  };
+
+  const handleChat = (ex: Exchange) => {
+    const isSender = ex.senderId === user?.uid;
+    const otherId = isSender ? ex.receiverId : ex.senderId;
+    getUserById(otherId).then((u) => {
+      if (u) {
+        setChatUser(u);
+        setShowChat(true);
+      }
+    });
+  };
+
+  const statusConfig: Record<ExchangeStatus, { icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; color: string; label: string }> = {
+    pending: { icon: Clock, color: 'text-amber-600 bg-amber-50', label: 'Pending' },
+    accepted: { icon: Check, color: 'text-green-600 bg-green-50', label: 'Accepted' },
+    declined: { icon: X, color: 'text-red-600 bg-red-50', label: 'Declined' },
+    expired: { icon: X, color: 'text-gray-500 bg-gray-50', label: 'Expired' },
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="w-8 h-8 border-4 border-amber-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold font-serif text-gray-900">My Exchanges</h1>
+        <div className="flex items-center gap-2 text-amber-600">
+          <Tag className="w-5 h-5" />
+          <span className="text-sm font-medium">Book Exchange</span>
+        </div>
+      </div>
+
+      {exchanges.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-xl border border-amber-100">
+          <BookOpen className="w-16 h-16 text-amber-300 mx-auto mb-4" />
+          <p className="text-gray-500 font-medium">No exchange requests yet</p>
+          <p className="text-sm text-gray-400 mt-1">
+            Search for books to start an exchange
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {exchanges
+            .sort((a, b) => {
+              const order = { pending: 0, accepted: 1, declined: 2, expired: 3 };
+              return (order[a.status] ?? 0) - (order[b.status] ?? 0);
+            })
+            .map((ex) => {
+              const config = statusConfig[ex.status];
+              const Icon = config.icon;
+              const isIncoming = ex.receiverId === user?.uid;
+              const otherName = isIncoming
+                ? senderNames[ex.senderId] || 'Loading...'
+                : recipientNames[ex.receiverId] || 'Loading...';
+
+              return (
+                <div key={ex.id} className={`bg-white rounded-xl border p-4 ${
+                  ex.status === 'pending' ? 'border-amber-200' : 'border-gray-200'
+                }`}>
+                  <div className="flex items-start gap-3">
+                    {ex.bookCoverImageURL ? (
+                      <img src={ex.bookCoverImageURL} alt={ex.bookTitle} className="w-12 h-16 object-cover rounded-lg flex-shrink-0" />
+                    ) : (
+                      <div className="w-12 h-16 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <BookOpen className="w-5 h-5 text-amber-600" />
+                      </div>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="font-semibold text-gray-900 text-sm truncate">{ex.bookTitle || 'Unknown Book'}</p>
+                        <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${config.color}`}>
+                          <Icon className="w-3 h-3" />
+                          {config.label}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500">{ex.bookAuthor || 'Unknown Author'}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {isIncoming ? `From: ${otherName}` : `To: ${otherName}`}
+                      </p>
+                      {ex.note && (
+                        <p className="text-xs text-gray-500 mt-1 italic bg-gray-50 p-2 rounded-lg">
+                          Request note: "{ex.note}"
+                        </p>
+                      )}
+                      {ex.declineNote && (
+                        <p className="text-xs text-red-600 mt-1 italic bg-red-50 p-2 rounded-lg">
+                          Decline reason: "{ex.declineNote}"
+                        </p>
+                      )}
+
+                      {/* Status-based actions */}
+                      <div className="flex items-center gap-2 mt-2">
+                        {ex.status === 'accepted' && (
+                          <button
+                            onClick={() => handleChat(ex)}
+                            className="flex items-center gap-1.5 text-xs text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg hover:bg-green-100 transition"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5" />
+                            Chat to coordinate
+                          </button>
+                        )}
+                        {ex.status === 'declined' && isIncoming && (
+                          <button
+                            onClick={() => openDecline(ex.id)}
+                            className="flex items-center gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-100 transition"
+                          >
+                            <PenLine className="w-3.5 h-3.5" />
+                            Send a note
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Pending actions */}
+                    {ex.status === 'pending' && isIncoming && (
+                      <div className="flex gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => handleAccept(ex.id)}
+                          className="p-2 bg-green-100 text-green-600 rounded-lg hover:bg-green-200 transition"
+                          title="Accept"
+                        >
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => openDecline(ex.id)}
+                          className="p-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition"
+                          title="Decline"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      )}
+
+      {/* Decline modal */}
+      {declineModal && (() => {
+        const ex = exchanges.find((e) => e.id === declineModal);
+        if (!ex) return null;
+        const declineIsIncoming = ex.receiverId === user?.uid;
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-amber-100 shadow-2xl">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold font-serif text-gray-900">Decline Request</h2>
+                <button onClick={() => setDeclineModal(null)} className="text-gray-400 hover:text-gray-600">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <p className="text-sm text-gray-600 mb-3">
+                {declineIsIncoming
+                  ? `Decline incoming request for "${ex.bookTitle}"`
+                  : `Cancel your outgoing request for "${ex.bookTitle}"`}
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Optional note (will be sent to the requester)
+                </label>
+                <textarea
+                  value={declineNote}
+                  onChange={(e) => setDeclineNote(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none resize-none text-sm"
+                  rows={3}
+                  placeholder="e.g., Book is not available until next month, or I've lost the copy..."
+                />
+              </div>
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={() => handleDecline(declineModal)}
+                  className="flex-1 flex items-center justify-center gap-1.5 bg-red-600 text-white py-2.5 rounded-xl font-medium hover:bg-red-700 transition"
+                >
+                  <Send className="w-4 h-4" />
+                  Decline & Send Note
+                </button>
+                <button
+                  onClick={() => setDeclineModal(null)}
+                  className="flex-1 bg-gray-200 text-gray-700 py-2.5 rounded-xl hover:bg-gray-300 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Chat modal */}
+      {showChat && chatUser && user && (
+        <ChatView
+          recipient={chatUser}
+          onClose={() => setShowChat(false)}
+        />
+      )}
+    </div>
+  );
+}

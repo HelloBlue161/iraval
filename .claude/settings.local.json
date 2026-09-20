@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npx vite *)",
+      "Bash(npx firebase *)",
+      "Bash(cp /home/palanivelg/palanivelg/iraval_web_app/src/types/index.ts types/)",
+      "Bash(cp -r /home/palanivelg/palanivelg/iraval_web_app/src/services/* services/)",
+      "Bash(cp -r /home/palanivelg/palanivelg/iraval_web_app/src/contexts/* contexts/)",
+      "Bash(npx create-expo-app@latest apps/mobile --template expo-template-blank-typescript)",
+      "Bash(pkill -9 -f \"expo start\")",
+      "Bash(npx expo *)",
+      "Bash(rsync *)",
+      "Bash(ssh *)",
+      "Bash(ping *)",
+      "Bash(./node_modules/.bin/tsc -b)",
+      "Bash(./node_modules/.bin/vite build *)",
+      "Read(//home/palanivelg/Projects/**)",
+      "Bash(firebase deploy *)",
+      "Bash(npm run *)"
+    ]
+  }
+}
