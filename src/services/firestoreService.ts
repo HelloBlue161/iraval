@@ -509,16 +509,25 @@ export async function checkPendingExchange(senderId: string, receiverId: string,
   return false;
 }
 
-// Check if a book (by document ID) has any active exchange involving a specific user
+// Check if a book has any active exchange involving a specific user
 export async function isBookUnavailable(bookId: string, userId: string): Promise<boolean> {
+  // Check if the user is involved in any active exchange for this book (as sender OR receiver)
+  // Note: We check by bookId field in exchanges, but also fallback to checking all exchanges for this user
   const q = query(
     collection(db, 'exchanges'),
-    where('bookId', '==', bookId),
     where('status', 'in', ['pending', 'accepted'] as const),
-    where('receiverId', '==', userId)
+    where('senderId', '==', userId)
   );
   const snap = await getDocs(q);
-  return !snap.empty;
+  
+  // Check if any of the user's pending/accepted exchanges match this bookId
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    if ((data as { bookId?: string }).bookId === bookId) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function onUserExchanges(

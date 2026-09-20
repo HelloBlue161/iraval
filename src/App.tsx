@@ -55,7 +55,7 @@ function MainLayout() {
     <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 flex">
       <Navbar />
 
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-auto lg:ml-64 pt-16 lg:pt-0">
         <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
           <Routes>
             <Route path="/library" element={<LibraryView />} />

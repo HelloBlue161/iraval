@@ -25,11 +25,11 @@ export default function Navbar() {
   return (
     <>
       {/* Mobile top bar */}
-      <nav className="lg:hidden bg-white/90 backdrop-blur-sm border-b border-amber-200 sticky top-0 z-10">
-        <div className="flex items-center justify-between px-4 py-3">
+      <nav className="lg:hidden bg-white/90 backdrop-blur-sm border-b border-amber-200 fixed top-0 left-0 right-0 z-10">
+        <div className="flex items-center justify-between px-4 py-2">
           <Link to="/library" className="flex items-center gap-2">
-            <BookOpen className="w-6 h-6 text-amber-600" />
-            <span className="font-bold text-lg text-amber-700 font-serif">Iraval</span>
+            <BookOpen className="w-5 h-5 text-amber-600" />
+            <span className="font-bold text-base text-amber-700 font-serif">Iraval</span>
           </Link>
           <button
             onClick={handleLogout}
@@ -47,13 +47,13 @@ export default function Navbar() {
               <Link
                 key={tab.key}
                 to={tab.path}
-                className={`flex-1 flex flex-col items-center py-2 text-xs transition-colors ${
+                className={`flex-1 flex flex-col items-center py-1 text-xs transition-colors ${
                   active
                     ? 'text-amber-700 border-t-2 border-amber-600 -mt-[1px]'
                     : 'text-gray-400'
                 }`}
               >
-                <Icon className={`w-5 h-5 ${active ? 'text-amber-600' : ''}`} />
+                <Icon className={`w-4 h-4 ${active ? 'text-amber-600' : ''}`} />
                 <span className="mt-0.5">{tab.label}</span>
               </Link>
             );
