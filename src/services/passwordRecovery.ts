@@ -6,7 +6,11 @@ import {
   deleteDoc,
   updateDoc,
 } from 'firebase/firestore';
-import { confirmPasswordReset } from 'firebase/auth';
+import {
+  confirmPasswordReset,
+  sendPasswordResetEmail,
+  type ActionCodeSettings,
+} from 'firebase/auth';
 import {
   generateRecoveryCode,
   validateCodeFormat,
@@ -63,9 +67,12 @@ export async function sendRecoveryCode(email: string): Promise<{
       attempts: 0,
     } as RecoveryRecord, { merge: true });
 
-    // Note: In production, this would send an email with the recovery code
-    // For now, the code is stored in Firestore and can be retrieved for testing
-    // In production, integrate with SendGrid/AWS SES to email the code
+    // Send Firebase password reset email (this sends a link to the user's email)
+    const actionCodeSettings: ActionCodeSettings = {
+      url: 'https://iraval.netlify.app/reset-password',
+      handleCodeInApp: true,
+    };
+    await sendPasswordResetEmail(auth, email, actionCodeSettings);
 
     // Log the attempt
     if (attemptSnap.exists()) {
@@ -80,8 +87,7 @@ export async function sendRecoveryCode(email: string): Promise<{
       } as AttemptRecord);
     }
 
-    // For testing: return the code directly (in production, email would be sent)
-    return { success: true, message: `Recovery code: ${code}` };
+    return { success: true, message: `A password reset link has been sent to ${email}` };
   } catch {
     return { success: false, message: 'Failed to send recovery code. Please try again.' };
   }
@@ -175,11 +181,17 @@ export async function resetPassword(
       return { success: false, message: 'Please verify your code first.' };
     }
 
-    // Use Firebase auth to reset password
-    // We need the user to be signed in for updatePassword, so we'll use confirmPasswordReset flow
-    // Alternative: use the email link flow
-    // For in-app, we use sendPasswordResetEmail and have the user click the link
-    return { success: false, message: 'Please check your email and click the reset link to complete password change.' };
+    // Send password reset email to complete the reset
+    const actionCodeSettings: ActionCodeSettings = {
+      url: 'https://iraval.netlify.app/reset-password',
+      handleCodeInApp: true,
+    };
+    await sendPasswordResetEmail(auth, email, actionCodeSettings);
+    
+    // Clean up the recovery code
+    await deleteDoc(codeRef);
+    
+    return { success: true, message: 'Password reset link sent! Check your email and click the link to reset your password.' };
   } catch {
     return { success: false, message: 'Password reset failed. Please try again.' };
   }
