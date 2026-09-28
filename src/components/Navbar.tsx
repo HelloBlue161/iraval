@@ -1,10 +1,42 @@
 import { Link, useLocation } from 'react-router-dom';
 import { BookOpen, Search, Users, MessageSquare, Tag, Settings, LogOut, User } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useEffect, useState } from 'react';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../services/firebase';
 
 export default function Navbar() {
-  const { logoutFn } = useAuth();
+  const { logoutFn, user } = useAuth();
   const location = useLocation();
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Count pending exchange requests
+  useEffect(() => {
+    if (!user) {
+      setPendingCount(0);
+      return;
+    }
+
+    const countPending = async () => {
+      try {
+        const q = query(
+          collection(db, 'exchanges'),
+          where('receiverId', '==', user.email),
+          where('status', '==', 'pending')
+        );
+        const snap = await getDocs(q);
+        setPendingCount(snap.size);
+      } catch (err) {
+        console.error('Failed to count pending exchanges:', err);
+        setPendingCount(0);
+      }
+    };
+
+    countPending();
+    // Refresh every 30 seconds
+    const interval = setInterval(countPending, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
 
   const tabs = [
     { key: 'library', label: 'Library', icon: BookOpen, path: '/library' },
@@ -47,13 +79,18 @@ export default function Navbar() {
               <Link
                 key={tab.key}
                 to={tab.path}
-                className={`flex-1 flex flex-col items-center py-1 text-xs transition-colors ${
+                className={`relative flex-1 flex flex-col items-center py-1 text-xs transition-colors ${
                   active
                     ? 'text-amber-700 border-t-2 border-amber-600 -mt-[1px]'
                     : 'text-gray-400'
                 }`}
               >
                 <Icon className={`w-4 h-4 ${active ? 'text-amber-600' : ''}`} />
+                {tab.key === 'exchanges' && pendingCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {pendingCount > 9 ? '9+' : pendingCount}
+                  </span>
+                )}
                 <span className="mt-0.5">{tab.label}</span>
               </Link>
             );
@@ -81,7 +118,7 @@ export default function Navbar() {
               <Link
                 key={tab.key}
                 to={tab.path}
-                className={`flex items-center gap-3 px-6 py-3 text-sm transition-all ${
+                className={`relative flex items-center gap-3 px-6 py-3 text-sm transition-all ${
                   active
                     ? 'bg-gradient-to-r from-amber-50 to-orange-50 text-amber-700 font-medium border-r-3 border-amber-600'
                     : 'text-gray-600 hover:bg-amber-50/50 hover:text-amber-600'
@@ -89,6 +126,11 @@ export default function Navbar() {
               >
                 <Icon className={`w-5 h-5 ${active ? 'text-amber-600' : 'text-gray-400'}`} />
                 {tab.label}
+                {tab.key === 'exchanges' && pendingCount > 0 && (
+                  <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full px-2 py-0.5">
+                    {pendingCount > 9 ? '9+' : pendingCount}
+                  </span>
+                )}
                 {active && (
                   <div className="ml-auto w-1.5 h-1.5 bg-amber-600 rounded-full" />
                 )}

@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { BookOpen, Plus, Search, X, Edit2, Trash2, Book, Globe } from 'lucide-react';
+import { BookOpen, Plus, Search, X, Edit2, Trash2, Book, Globe, User } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { onUserBooks, addBook, deleteBook, updateBook } from '../services/firestoreService';
+import { onUserBooks, addBook, deleteBook, updateBook, onBorrowedBooks, getUserById } from '../services/firestoreService';
 import type { Book as BookType } from '../types';
 import { LANGUAGES } from '../types';
 
@@ -10,6 +10,7 @@ export default function LibraryView() {
   const { user } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
   const [books, setBooks] = useState<BookType[]>([]);
+  const [borrowedBooks, setBorrowedBooks] = useState<BookType[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -25,6 +26,7 @@ export default function LibraryView() {
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [showOtherInput, setShowOtherInput] = useState(false);
+  const [borrowedBy, setBorrowedBy] = useState<Record<string, string>>({});
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const loadBooks = useCallback(() => {
@@ -34,11 +36,31 @@ export default function LibraryView() {
     });
   }, [user]);
 
+  const loadBorrowedBooks = useCallback(() => {
+    if (!user) return;
+    return onBorrowedBooks(user.uid, (loadedBooks) => {
+      setBorrowedBooks(loadedBooks);
+      
+      // Fetch borrower names
+      loadedBooks.forEach((book) => {
+        if (!borrowedBy[book.addedBy] && book.addedBy) {
+          getUserById(book.addedBy).then((u) => {
+            if (u) setBorrowedBy((prev) => ({ ...prev, [book.addedBy]: u.fullName }));
+          });
+        }
+      });
+    });
+  }, [user, borrowedBy]);
+
   useEffect(() => {
     if (!user) return;
-    const unsubscribe = loadBooks();
-    return () => unsubscribe?.();
-  }, [user, loadBooks]);
+    const unsub1 = loadBooks();
+    const unsub2 = loadBorrowedBooks();
+    return () => {
+      unsub1?.();
+      unsub2?.();
+    };
+  }, [user, loadBooks, loadBorrowedBooks]);
 
   const getLanguage = (value: string, isCustom: boolean) => {
     if (isCustom) return customLanguage.trim() || 'Other';
@@ -121,7 +143,9 @@ export default function LibraryView() {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
   };
 
-  const filteredBooks = books.filter(
+  const allBooks = [...books, ...borrowedBooks];
+  
+  const filteredBooks = allBooks.filter(
     (book) => {
       const matchesSearch =
         !searchQuery ||
@@ -142,7 +166,9 @@ export default function LibraryView() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold font-serif text-gray-900">My Library</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{books.length} books in your collection</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {books.length} owned · {borrowedBooks.length} borrowed
+          </p>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
@@ -189,7 +215,7 @@ export default function LibraryView() {
         )}
       </div>
 
-      {filteredBooks.length === 0 && books.length > 0 && hasActiveFilters && (
+      {filteredBooks.length === 0 && allBooks.length > 0 && hasActiveFilters && (
         <div className="text-center py-12 bg-white/80 backdrop-blur-sm rounded-xl border border-amber-100">
           <Search className="w-12 h-12 text-amber-300 mx-auto mb-3" />
           <p className="text-gray-500 font-medium">No books match your filters</p>
@@ -197,7 +223,7 @@ export default function LibraryView() {
         </div>
       )}
 
-      {filteredBooks.length === 0 && books.length === 0 && (
+      {filteredBooks.length === 0 && allBooks.length === 0 && (
         <div className="text-center py-16 bg-white/80 backdrop-blur-sm rounded-xl border border-amber-100">
           <Book className="w-16 h-16 text-amber-300 mx-auto mb-4" />
           <p className="text-gray-500 font-medium text-lg">Your library is empty</p>
@@ -216,7 +242,7 @@ export default function LibraryView() {
       {filteredBooks.length > 0 && (
         <>
           <p className="text-sm text-gray-500 mb-3">
-            Showing {filteredBooks.length} of {books.length} books
+            Showing {filteredBooks.length} of {allBooks.length} books
             {hasActiveFilters && (
               <span className="text-gray-400"> (filtered)</span>
             )}
@@ -225,7 +251,9 @@ export default function LibraryView() {
             {filteredBooks.map((book) => (
               <div
                 key={book.id}
-                className="bg-white/80 backdrop-blur-sm rounded-xl border border-amber-100 overflow-hidden hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 group"
+                className={`bg-white/80 backdrop-blur-sm rounded-xl border overflow-hidden hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 group ${
+                  book.bookStatus === 'borrowed' ? 'border-blue-200' : 'border-amber-100'
+                }`}
               >
                 <div className="h-44 bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center relative">
                   {book.coverImageURL ? (
@@ -237,19 +265,28 @@ export default function LibraryView() {
                   ) : (
                     <BookOpen className="w-12 h-12 text-amber-300" />
                   )}
+                  {book.bookStatus === 'borrowed' && (
+                    <div className="absolute top-2 left-2 bg-blue-500 text-white text-xs px-2 py-1 rounded-lg font-medium">
+                      Borrowed
+                    </div>
+                  )}
                   <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={() => handleEdit(book)}
-                      className="p-1.5 bg-white rounded-full shadow hover:bg-amber-50 transition"
-                    >
-                      <Edit2 className="w-3.5 h-3.5 text-amber-600" />
-                    </button>
-                    <button
-                      onClick={() => setDeleteConfirm(book.id)}
-                      className="p-1.5 bg-white rounded-full shadow hover:bg-red-50 transition"
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                    </button>
+                    {book.bookStatus !== 'borrowed' && (
+                      <>
+                        <button
+                          onClick={() => handleEdit(book)}
+                          className="p-1.5 bg-white rounded-full shadow hover:bg-amber-50 transition"
+                        >
+                          <Edit2 className="w-3.5 h-3.5 text-amber-600" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirm(book.id)}
+                          className="p-1.5 bg-white rounded-full shadow hover:bg-red-50 transition"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="p-4">
@@ -270,8 +307,14 @@ export default function LibraryView() {
                   {book.language && (
                     <p className="text-xs text-gray-400 mt-1">{book.language}</p>
                   )}
+                  {book.bookStatus === 'borrowed' && borrowedBy[book.addedBy] && (
+                    <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                      <User className="w-3 h-3" />
+                      Borrowed from {borrowedBy[book.addedBy]}
+                    </p>
+                  )}
                 </div>
-                {deleteConfirm === book.id && (
+                {deleteConfirm === book.id && book.bookStatus !== 'borrowed' && (
                   <div className="px-4 pb-4">
                     <div className="flex gap-2">
                       <button

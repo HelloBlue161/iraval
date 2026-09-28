@@ -545,14 +545,20 @@ export function onUserExchanges(
     const snapIds = new Set<string>();
     snap.forEach((d) => {
       snapIds.add(d.id);
-      if (!seenIds.has(d.id)) {
+      // Update or add the exchange
+      const existingIdx = allExchanges.findIndex(ex => ex.id === d.id);
+      if (existingIdx !== -1) {
+        // Update existing exchange with new data
+        allExchanges[existingIdx] = { id: d.id, ...(d.data() as Omit<Exchange, 'id'>) };
+      } else if (!seenIds.has(d.id)) {
+        // Add new exchange
         seenIds.add(d.id);
         allExchanges.push({ id: d.id, ...(d.data() as Omit<Exchange, 'id'>) });
       }
     });
     // Remove exchanges that are no longer in EITHER query
     for (const ex of [...allExchanges]) {
-      if (!seenIds.has(ex.id)) {
+      if (!snapIds.has(ex.id)) {
         const idx = allExchanges.indexOf(ex);
         if (idx !== -1) allExchanges.splice(idx, 1);
       }
@@ -583,6 +589,13 @@ export async function declineExchange(exchangeId: string, note?: string): Promis
     status: 'declined',
     respondedAt: new Date(),
     ...(note ? { declineNote: note } : {}),
+  });
+}
+
+export async function returnExchange(exchangeId: string): Promise<void> {
+  await updateDoc(doc(db, 'exchanges', exchangeId), {
+    status: 'returned',
+    returnedAt: new Date(),
   });
 }
 
@@ -727,4 +740,48 @@ export async function getAllBooks(): Promise<SearchResult[]> {
   }
 
   return results;
+}
+
+// Fetch borrowed books for a user (books they've accepted to borrow)
+export function onBorrowedBooks(
+  uid: string,
+  callback: (books: Book[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, 'exchanges'),
+    where('senderId', '==', uid),
+    where('status', '==', 'accepted')
+  );
+  
+  const borrowedBooks: Book[] = [];
+  const seenBookIds = new Set<string>();
+  
+  const unsub = onSnapshot(q, async (snap) => {
+    borrowedBooks.length = 0;
+    seenBookIds.clear();
+    
+    const promises = snap.docs.map(async (doc) => {
+      const data = doc.data();
+      const bookId = data.bookId;
+      if (seenBookIds.has(bookId)) return;
+      seenBookIds.add(bookId);
+      
+      // Use the exchange data for borrowed book info
+      borrowedBooks.push({
+        id: bookId,
+        title: data.bookTitle,
+        author: data.bookAuthor || 'Unknown',
+        addedBy: data.receiverId,
+        addedAt: data.requestedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+        coverImageURL: data.bookCoverImageURL || '',
+        language: '',
+        bookStatus: 'borrowed' as const,
+      });
+    });
+    
+    await Promise.all(promises);
+    callback([...borrowedBooks]);
+  });
+  
+  return unsub;
 }

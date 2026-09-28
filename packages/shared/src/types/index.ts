@@ -66,7 +66,7 @@ export interface ChatSession {
   unreadCount: number;
 }
 
-export type ExchangeStatus = 'pending' | 'accepted' | 'declined' | 'expired';
+export type ExchangeStatus = 'pending' | 'accepted' | 'returned' | 'declined' | 'expired';
 
 export interface Exchange {
   id: string;
@@ -79,6 +79,7 @@ export interface Exchange {
   status: ExchangeStatus;
   requestedAt: Date;
   respondedAt?: Date;
+  returnedAt?: Date;
   note?: string;
   declineNote?: string;
 }

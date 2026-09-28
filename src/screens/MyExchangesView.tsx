@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Check, X, Clock, Tag, MessageSquare, PenLine, Send } from 'lucide-react';
+import { BookOpen, Check, X, Clock, Tag, MessageSquare, PenLine, Send, RotateCcw } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { onUserExchanges, acceptExchange, declineExchange, getUserById } from '../services/firestoreService';
-import type { Exchange, ExchangeStatus, User } from '../types';
+import { onUserExchanges, acceptExchange, declineExchange, returnExchange, getUserById } from '../services/firestoreService';
+import type { Exchange, User } from '../types';
 import ChatView from './ChatView';
 
 export default function MyExchangesView() {
@@ -73,6 +73,15 @@ export default function MyExchangesView() {
     }
   };
 
+  const handleReturn = async (id: string) => {
+    try {
+      await returnExchange(id);
+      toastSuccess('Book marked as returned! Owner can now lend it to others.');
+    } catch {
+      toastError('Failed to mark book as returned.');
+    }
+  };
+
   const handleChat = (ex: Exchange) => {
     const isSender = ex.senderId === user?.uid;
     const otherId = isSender ? ex.receiverId : ex.senderId;
@@ -84,9 +93,10 @@ export default function MyExchangesView() {
     });
   };
 
-  const statusConfig: Record<ExchangeStatus, { icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; color: string; label: string }> = {
+  const statusConfig: Record<string, { icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; color: string; label: string }> = {
     pending: { icon: Clock, color: 'text-amber-600 bg-amber-50', label: 'Pending' },
     accepted: { icon: Check, color: 'text-green-600 bg-green-50', label: 'Accepted' },
+    returned: { icon: RotateCcw, color: 'text-blue-600 bg-blue-50', label: 'Returned' },
     declined: { icon: X, color: 'text-red-600 bg-red-50', label: 'Declined' },
     expired: { icon: X, color: 'text-gray-500 bg-gray-50', label: 'Expired' },
   };
@@ -121,11 +131,11 @@ export default function MyExchangesView() {
         <div className="space-y-3">
           {exchanges
             .sort((a, b) => {
-              const order = { pending: 0, accepted: 1, declined: 2, expired: 3 };
-              return (order[a.status] ?? 0) - (order[b.status] ?? 0);
+              const order = { pending: 0, accepted: 1, returned: 2, declined: 3, expired: 4 };
+              return (order[a.status as keyof typeof order] ?? 0) - (order[b.status as keyof typeof order] ?? 0);
             })
             .map((ex) => {
-              const config = statusConfig[ex.status];
+              const config = statusConfig[ex.status as keyof typeof statusConfig] || statusConfig.pending;
               const Icon = config.icon;
               const isIncoming = ex.receiverId === user?.uid;
               const otherName = isIncoming
@@ -134,7 +144,9 @@ export default function MyExchangesView() {
 
               return (
                 <div key={ex.id} className={`bg-white rounded-xl border p-4 ${
-                  ex.status === 'pending' ? 'border-amber-200' : 'border-gray-200'
+                  ex.status === 'pending' ? 'border-amber-200' :
+                  ex.status === 'accepted' ? 'border-green-200' :
+                  (ex.status as string) === 'returned' ? 'border-blue-200' : 'border-gray-200'
                 }`}>
                   <div className="flex items-start gap-3">
                     {ex.bookCoverImageURL ? (
@@ -170,7 +182,25 @@ export default function MyExchangesView() {
 
                       {/* Status-based actions */}
                       <div className="flex items-center gap-2 mt-2">
-                        {ex.status === 'accepted' && (
+                        {ex.status === 'accepted' && isIncoming && (
+                          <>
+                            <button
+                              onClick={() => handleChat(ex)}
+                              className="flex items-center gap-1.5 text-xs text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg hover:bg-green-100 transition"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              Chat to coordinate
+                            </button>
+                            <button
+                              onClick={() => handleReturn(ex.id)}
+                              className="flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              Return Book
+                            </button>
+                          </>
+                        )}
+                        {ex.status === 'accepted' && !isIncoming && (
                           <button
                             onClick={() => handleChat(ex)}
                             className="flex items-center gap-1.5 text-xs text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg hover:bg-green-100 transition"

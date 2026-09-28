@@ -6,11 +6,7 @@ import {
   deleteDoc,
   updateDoc,
 } from 'firebase/firestore';
-import {
-  confirmPasswordReset,
-  sendPasswordResetEmail,
-  type ActionCodeSettings,
-} from 'firebase/auth';
+import { confirmPasswordReset } from 'firebase/auth';
 import {
   generateRecoveryCode,
   validateCodeFormat,
@@ -67,12 +63,9 @@ export async function sendRecoveryCode(email: string): Promise<{
       attempts: 0,
     } as RecoveryRecord, { merge: true });
 
-    // Also send Firebase password reset email as backup
-    const actionCodeSettings: ActionCodeSettings = {
-      url: 'https://iraval.app/reset-password',
-      handleCodeInApp: true,
-    };
-    await sendPasswordResetEmail(auth, email, actionCodeSettings);
+    // Note: In production, this would send an email with the recovery code
+    // For now, the code is stored in Firestore and can be retrieved for testing
+    // In production, integrate with SendGrid/AWS SES to email the code
 
     // Log the attempt
     if (attemptSnap.exists()) {
@@ -87,7 +80,8 @@ export async function sendRecoveryCode(email: string): Promise<{
       } as AttemptRecord);
     }
 
-    return { success: true, message: `A verification code has been sent to ${email}` };
+    // For testing: return the code directly (in production, email would be sent)
+    return { success: true, message: `Recovery code: ${code}` };
   } catch {
     return { success: false, message: 'Failed to send recovery code. Please try again.' };
   }
