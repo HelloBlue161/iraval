@@ -10,6 +10,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
+  sendEmailVerification,
   type User as FirebaseUser,
 } from 'firebase/auth';
 import { auth, db } from '../services/firebase';
@@ -31,7 +32,9 @@ interface AuthContextType {
     zipCode: string,
     birthDate: string,
     city?: string
-  ) => Promise<void>;
+  ) => Promise<{ needsVerification?: boolean }>;
+  needsEmailVerification: boolean;
+  setNeedsEmailVerification: (needs: boolean) => void;
   loginFn: (email: string, password: string) => Promise<void>;
   loginByUsername: (username: string, password: string) => Promise<void>;
   logoutFn: () => Promise<void>;
@@ -46,6 +49,12 @@ export function useAuth(): AuthContextType {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
+}
+
+export function useAuthState() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuthState must be used within AuthProvider');
+  return { user: ctx.user, loading: ctx.loading, needsEmailVerification: ctx.needsEmailVerification };
 }
 
 const ZIP_CITY_MAP: Record<string, string> = {
@@ -64,6 +73,7 @@ const ZIP_CITY_MAP: Record<string, string> = {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsEmailVerification, setNeedsEmailVerification] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -97,9 +107,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       zipCode,
       city: detectedCity,
       profileImageURL: '',
-      createdAt: new Date().toISOString(),
     });
     console.log('User document written successfully');
+    
+    // Send email verification
+    await sendEmailVerification(cred.user);
+    
+    return { needsVerification: true };
   };
 
   const loginFn = async (email: string, password: string) => {
@@ -161,6 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         sendRecoveryCode,
         verifyRecoveryCode,
         resetPassword,
+        needsEmailVerification,
+        setNeedsEmailVerification,
       }}
     >
       {children}

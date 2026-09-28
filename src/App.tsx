@@ -4,6 +4,7 @@ import { ToastProvider } from './contexts/ToastContext';
 import Navbar from './components/Navbar';
 import LoginView from './screens/LoginView';
 import SignupView from './screens/SignupView';
+import EmailVerificationView from './screens/EmailVerificationView';
 import TermsView from './screens/TermsView';
 import PasswordRecoveryView from './screens/PasswordRecoveryView';
 import LibraryView from './screens/LibraryView';
@@ -27,6 +28,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Redirect to email verification if not verified
+  if (!user.emailVerified) {
+    return <Navigate to="/verify-email" replace />;
   }
 
   return <>{children}</>;
@@ -92,6 +98,14 @@ function App() {
               element={
                 <PublicRoute>
                   <SignupView />
+                </PublicRoute>
+              }
+            />
+            <Route
+              path="/verify-email"
+              element={
+                <PublicRoute>
+                  <EmailVerificationView />
                 </PublicRoute>
               }
             />

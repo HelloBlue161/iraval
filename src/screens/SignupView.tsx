@@ -69,8 +69,12 @@ export default function SignupView() {
       }
 
       const targetCity = city.trim() || detectedCity;
-      await signupFn(email, password, fullName, username, zipCode, birthDate, targetCity);
-      navigate('/library');
+      const result = await signupFn(email, password, fullName, username, zipCode, birthDate, targetCity);
+      if (result?.needsVerification) {
+        navigate('/verify-email');
+      } else {
+        navigate('/library');
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Signup failed';
       console.error('Signup error:', err);
