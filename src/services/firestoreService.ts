@@ -9,7 +9,6 @@ import {
   where,
   orderBy,
   serverTimestamp,
-  limit,
   type Unsubscribe,
   getDoc,
   getDocs,
@@ -246,13 +245,31 @@ export async function sendMessage(
   text: string
 ): Promise<void> {
   const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  // Participants are encoded in the chat id (chat_{uid1}_{uid2}, uids sorted);
+  // Firebase Auth UIDs are alphanumeric, so splitting on "_" is safe.
+  // The participants array is denormalized onto every message so the
+  // security rules can authorize reads without extra lookups.
+  const participants = chatId.replace(/^chat_/, '').split('_').filter(Boolean);
   const message: Omit<Message, 'id'> = {
     chatId,
     senderId,
     text,
     timestamp: new Date(),
   };
-  await setDoc(doc(db, 'chats', chatId, 'messages', messageId), message);
+  await setDoc(doc(db, 'chats', chatId, 'messages', messageId), {
+    ...message,
+    participants,
+  });
+  await setDoc(
+    doc(db, 'chats', chatId),
+    {
+      participants,
+      lastMessage: text,
+      lastMessageTime: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
 }
 
 // ── Chat List (all conversations the user participated in) ─────
@@ -266,41 +283,35 @@ export interface UserChat {
 }
 
 export async function getUserChats(uid: string): Promise<UserChat[]> {
+  // Indexed query: only chats the user participates in. The parent chat
+  // document is maintained by sendMessage(); chats created before that
+  // change have no parent doc and won't appear until a new message is sent.
   const chatsRef = collection(db, 'chats');
-  const snap = await getDocs(chatsRef);
+  const q = query(chatsRef, where('participants', 'array-contains', uid));
+  const snap = await getDocs(q);
 
   const result: UserChat[] = [];
 
   for (const chatDoc of snap.docs) {
     const chatId = chatDoc.id;
-    // chatId format: chat_{uid1}_{uid2}
-    const parts = chatId.replace('chat_', '').split('_');
-    if (parts.length < 3) continue;
-    const p1 = parts[0];
-    const p2 = parts.slice(1).join('_');
-
-    // Skip if this user is NOT a participant in the chat
-    if (p1 !== uid && p2 !== uid) continue;
+    const data = chatDoc.data();
+    const participants: string[] = Array.isArray(data.participants) ? data.participants : [];
 
     // Determine the other user's ID
-    const otherUserId = p1 === uid ? p2 : p1;
+    const otherUserId = participants.find((p) => p !== uid) || '';
 
-    // Get last message from this chat
-    const msgsRef = collection(db, 'chats', chatId, 'messages');
-    const msgsQuery = query(msgsRef, orderBy('timestamp', 'desc'), limit(1));
-    const msgsSnap = await getDocs(msgsQuery);
-
-    let lastMessage: string | undefined;
-    let lastMessageTime: Date | undefined;
-    if (!msgsSnap.empty) {
-      const lastData = msgsSnap.docs[0].data();
-      lastMessage = lastData.text;
-      lastMessageTime = lastData.timestamp?.toDate();
-    }
+    // Last message is denormalized on the parent doc by sendMessage()
+    const lastMessage: string | undefined = data.lastMessage;
+    const lastMessageTime: Date | undefined = data.lastMessageTime?.toDate?.();
 
     // Fetch other user's name
-    const otherSnap = await getDoc(doc(db, 'users', otherUserId));
-    const otherName = otherSnap.exists() ? (otherSnap.data().fullName || '') : 'Unknown';
+    let otherName = 'Unknown';
+    if (otherUserId) {
+      const otherSnap = await getDoc(doc(db, 'users', otherUserId));
+      if (otherSnap.exists()) {
+        otherName = otherSnap.data().fullName || 'Unknown';
+      }
+    }
 
     result.push({ chatId, otherUserId, otherUserName: otherName, lastMessage, lastMessageTime });
   }
@@ -536,42 +547,48 @@ export function onUserExchanges(
 ): Unsubscribe {
   const q1 = query(collection(db, 'exchanges'), where('senderId', '==', uid));
   const q2 = query(collection(db, 'exchanges'), where('receiverId', '==', uid));
-  const allExchanges: Exchange[] = [];
-  const seenIds = new Set<string>();
 
-  const emit = () => callback([...allExchanges]);
+  // Track exchanges by id so updates merge instead of duplicating
+  const exchangeMap = new Map<string, Exchange>();
+  // Track which query each exchange currently belongs to, so an exchange
+  // disappearing from one query's snapshot is NOT removed while it still
+  // exists in the other query's results.
+  const inQ1 = new Set<string>(); // user is sender
+  const inQ2 = new Set<string>(); // user is receiver
 
-  const processSnap = (snap: import('firebase/firestore').QuerySnapshot) => {
-    const snapIds = new Set<string>();
+  const emit = () => callback(Array.from(exchangeMap.values()));
+
+  const processSnap = (
+    snap: import('firebase/firestore').QuerySnapshot,
+    mine: Set<string>
+  ) => {
+    const currentIds = new Set<string>();
     snap.forEach((d) => {
-      snapIds.add(d.id);
-      // Update or add the exchange
-      const existingIdx = allExchanges.findIndex(ex => ex.id === d.id);
-      if (existingIdx !== -1) {
-        // Update existing exchange with new data
-        allExchanges[existingIdx] = { id: d.id, ...(d.data() as Omit<Exchange, 'id'>) };
-      } else if (!seenIds.has(d.id)) {
-        // Add new exchange
-        seenIds.add(d.id);
-        allExchanges.push({ id: d.id, ...(d.data() as Omit<Exchange, 'id'>) });
-      }
+      currentIds.add(d.id);
+      mine.add(d.id);
+      // Add new or refresh existing with the latest data
+      exchangeMap.set(d.id, { id: d.id, ...(d.data() as Omit<Exchange, 'id'>) });
     });
-    // Remove exchanges that are no longer in EITHER query
-    for (const ex of [...allExchanges]) {
-      if (!snapIds.has(ex.id)) {
-        const idx = allExchanges.indexOf(ex);
-        if (idx !== -1) allExchanges.splice(idx, 1);
+
+    // Drop ids that left THIS query. Only remove from the map when the
+    // exchange is in neither query anymore.
+    for (const id of [...mine]) {
+      if (!currentIds.has(id)) {
+        mine.delete(id);
+        if (!inQ1.has(id) && !inQ2.has(id)) {
+          exchangeMap.delete(id);
+        }
       }
     }
     emit();
   };
 
   const unsub1 = onSnapshot(q1, (snap) => {
-    processSnap(snap);
+    processSnap(snap, inQ1);
   });
 
   const unsub2 = onSnapshot(q2, (snap) => {
-    processSnap(snap);
+    processSnap(snap, inQ2);
   });
 
   return () => { unsub1(); unsub2(); };

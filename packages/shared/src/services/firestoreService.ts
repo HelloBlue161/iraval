@@ -262,13 +262,29 @@ export async function sendMessage(
   text: string
 ): Promise<void> {
   const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  // Participants are encoded in the chat id (chat_{uid1}_{uid2}, uids sorted).
+  // Denormalized onto every message so security rules can authorize reads.
+  const participants = chatId.replace(/^chat_/, '').split('_').filter(Boolean);
   const message: Omit<Message, 'id'> = {
     chatId,
     senderId,
     text,
     timestamp: new Date(),
   };
-  await setDoc(doc(db, 'chats', chatId, 'messages', messageId), message);
+  await setDoc(doc(db, 'chats', chatId, 'messages', messageId), {
+    ...message,
+    participants,
+  });
+  await setDoc(
+    doc(db, 'chats', chatId),
+    {
+      participants,
+      lastMessage: text,
+      lastMessageTime: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
 }
 
 // ── Chat List (all conversations the user participated in) ─────
@@ -568,7 +584,7 @@ export function onUserExchanges(
       if (!currentIds.has(id)) {
         querySet.delete(id);
         // Only remove from exchangeMap if the exchange is in neither query
-        if (!querySet1.has(id) || !querySet2.has(id)) {
+        if (!querySet1.has(id) && !querySet2.has(id)) {
           exchangeMap.delete(id);
         }
       }

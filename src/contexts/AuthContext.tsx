@@ -14,12 +14,9 @@ import {
   type User as FirebaseUser,
 } from 'firebase/auth';
 import { auth, db } from '../services/firebase';
-import { setDoc, doc, query, collection, where, getDocs } from 'firebase/firestore';
-import {
-  sendRecoveryCode as sendRecoveryCodeApi,
-  verifyRecoveryCode as verifyRecoveryCodeApi,
-  resetPassword as resetPasswordApi,
-} from '../services/passwordRecovery';
+import { setDoc, doc } from 'firebase/firestore';
+import { sendPasswordReset as sendPasswordResetApi } from '../services/passwordRecovery';
+import { findUserEmailByUsername, ensureUsernameRegistry } from '../services/authService';
 
 interface AuthContextType {
   user: FirebaseUser | null;
@@ -38,9 +35,7 @@ interface AuthContextType {
   loginFn: (email: string, password: string) => Promise<void>;
   loginByUsername: (username: string, password: string) => Promise<void>;
   logoutFn: () => Promise<void>;
-  sendRecoveryCode: (email: string) => Promise<{ success: boolean; message: string }>;
-  verifyRecoveryCode: (email: string, code: string) => Promise<{ success: boolean; message: string }>;
-  resetPassword: (email: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
+  sendPasswordReset: (email: string) => Promise<{ success: boolean; message: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -121,46 +116,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const loginByUsername = async (username: string, password: string) => {
-    const q = query(collection(db, 'users'), where('username', '==', username));
-    const snap = await getDocs(q);
-
-    // Debug: log what was found
-    console.log('loginByUsername:', username, 'found', snap.docs.length, 'docs');
-    snap.docs.forEach((d) => console.log('  doc', d.id, '→', JSON.stringify(d.data())));
-
-    if (snap.empty) throw new Error('User not found');
-
-    // Prefer the document whose ID matches its uid field (the correct format
-    // from seed scripts). Fall back to first match for legacy docs.
-    let email: string | null = null;
-    for (const d of snap.docs) {
-      const data = d.data();
-      if (data.uid && data.uid === d.id) {
-        email = data.email as string;
-        break;
-      }
-    }
-    if (!email) {
-      email = snap.docs[0].data().email as string;
-    }
-    if (!email) throw new Error('No email found for this account');
-    await signInWithEmailAndPassword(auth, email, password);
+    const email = await findUserEmailByUsername(username);
+    if (!email) throw new Error('User not found');
+    const cred = await signInWithEmailAndPassword(auth, email, password);
+    await ensureUsernameRegistry(cred.user.uid);
   };
 
   const logoutFn = async () => {
     await signOut(auth);
   };
 
-  const sendRecoveryCode = async (email: string) => {
-    return sendRecoveryCodeApi(email);
-  };
-
-  const verifyRecoveryCode = async (email: string, code: string) => {
-    return verifyRecoveryCodeApi(email, code);
-  };
-
-  const resetPassword = async (email: string, newPassword: string) => {
-    return resetPasswordApi(email, newPassword);
+  const sendPasswordReset = async (email: string) => {
+    return sendPasswordResetApi(email);
   };
 
   return (
@@ -172,9 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginFn,
         loginByUsername,
         logoutFn,
-        sendRecoveryCode,
-        verifyRecoveryCode,
-        resetPassword,
+        sendPasswordReset,
         needsEmailVerification,
         setNeedsEmailVerification,
       }}
