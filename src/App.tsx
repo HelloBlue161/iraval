@@ -56,6 +56,31 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function VerifyEmailRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50">
+        <div className="w-10 h-10 border-4 border-amber-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Only a signed-in user with an unverified email may see this page.
+  // (PublicRoute would bounce them to /library, and ProtectedRoute would
+  // bounce them back here - an infinite redirect loop that renders blank.)
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user.emailVerified) {
+    return <Navigate to="/library" replace />;
+  }
+
+  return <>{children}</>;
+}
+
 function MainLayout() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 flex">
@@ -104,9 +129,9 @@ function App() {
             <Route
               path="/verify-email"
               element={
-                <PublicRoute>
+                <VerifyEmailRoute>
                   <EmailVerificationView />
-                </PublicRoute>
+                </VerifyEmailRoute>
               }
             />
             <Route path="/terms" element={<TermsView />} />

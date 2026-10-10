@@ -3,12 +3,15 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Mail, ArrowLeft, RefreshCw } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { sendEmailVerification } from 'firebase/auth';
+import { auth } from '../services/firebase';
 
 export default function EmailVerificationView() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [sent, setSent] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [stillUnverified, setStillUnverified] = useState(false);
 
   const handleResend = async () => {
     if (!user) return;
@@ -26,8 +29,24 @@ export default function EmailVerificationView() {
 
   const handleCheckEmail = async () => {
     if (!user) return;
-    // Force a reload to check if email is now verified
-    window.location.reload();
+    // Reload the user from Firebase: the cached auth object keeps the old
+    // emailVerified=false until explicitly refreshed. A plain page reload
+    // is not enough.
+    setChecking(true);
+    setStillUnverified(false);
+    try {
+      await user.reload();
+      if (auth.currentUser?.emailVerified) {
+        navigate('/library', { replace: true });
+        return;
+      }
+      setStillUnverified(true);
+    } catch (err) {
+      console.error('Failed to refresh verification status:', err);
+      setStillUnverified(true);
+    } finally {
+      setChecking(false);
+    }
   };
 
   if (!user) {
@@ -81,6 +100,12 @@ export default function EmailVerificationView() {
           </div>
         )}
 
+        {stillUnverified && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4">
+            <p className="text-sm text-amber-800">Still not verified — make sure you clicked the link in the email (check spam), then try again.</p>
+          </div>
+        )}
+
         <div className="space-y-3">
           <button
             onClick={handleResend}
@@ -93,10 +118,11 @@ export default function EmailVerificationView() {
 
           <button
             onClick={handleCheckEmail}
-            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white py-3 rounded-xl font-medium hover:from-green-600 hover:to-emerald-600 transition shadow-lg shadow-green-200"
+            disabled={checking}
+            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white py-3 rounded-xl font-medium hover:from-green-600 hover:to-emerald-600 disabled:opacity-50 transition shadow-lg shadow-green-200"
           >
-            <RefreshCw className="w-4 h-4" />
-            I Verified My Email - Continue
+            <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} />
+            {checking ? 'Checking...' : 'I Verified My Email - Continue'}
           </button>
 
           <Link

@@ -10,86 +10,48 @@ import {
   ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { auth } from '../services/firebase';
 import { useToast } from '../contexts/ToastContext';
 
-const ZIP_CITY_MAP: Record<string, string> = {
-  '10001': 'New York',
-  '90210': 'Beverly Hills',
-  '33101': 'Miami',
-  '60601': 'Chicago',
-  '75201': 'Dallas',
-  '30301': 'Atlanta',
-  '85001': 'Phoenix',
-  '19101': 'Philadelphia',
-  '77001': 'Houston',
-  '94101': 'San Francisco',
-};
-
+/**
+ * Password recovery, rebuilt on Firebase's native reset flow (same as web):
+ * one step - enter email, receive a secure link, set the new password on
+ * Firebase's hosted page. The old 6-digit-code screens were removed - the
+ * reset email contains a link, not a code.
+ */
 export default function PasswordRecoveryScreen() {
   const router = useRouter();
-  const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
-  const [step, setStep] = useState<1 | 2 | 3>(1); // 1=email, 2=code, 3=new password
+  const { success: toastSuccess, error: toastError } = useToast();
   const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSendCode = async () => {
-    if (!email.trim() || !email.includes('@')) {
+  const handleSendLink = async () => {
+    const normalized = email.trim().toLowerCase();
+    if (!normalized || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
       setError('Please enter a valid email address');
       return;
     }
     setError('');
     setLoading(true);
     try {
-      // Try Firebase password reset first
-      const { sendPasswordResetEmail } = await import('firebase/auth');
-      const { auth } = await import('../services/firebase');
-      await sendPasswordResetEmail(auth, email.trim());
-      setStep(2);
-      toastSuccess('Reset email sent! Check your inbox for the reset link.');
-      toastInfo('Also enter the 6-digit code sent to your email below.');
+      await sendPasswordResetEmail(auth, normalized);
+      setSent(true);
+      toastSuccess('Reset link sent! Check your inbox (and spam folder).');
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to send reset email';
-      setError(message);
-      toastError(message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleResetPassword = async () => {
-    if (!newPassword || !confirmPassword) {
-      setError('Please fill in all fields');
-      return;
-    }
-    if (newPassword.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-    if (!code || code.length !== 6) {
-      setError('Please enter the 6-digit code from your email');
-      return;
-    }
-    setError('');
-    setLoading(true);
-    try {
-      // Use Firebase password reset
-      const { confirmPasswordReset } = await import('firebase/auth');
-      const { auth } = await import('../services/firebase');
-      // The reset link in the email contains the oobCode
-      // For the code-based approach, we need to use Firebase's email link flow
-      // Since the user clicks the link in email, this step is informational
-      toastSuccess('Please check your email and click the reset link to set your new password.');
-      router.replace('/login');
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Password reset failed';
+      const code = (err as { code?: string })?.code ?? '';
+      // Don't reveal whether the address is registered (mirrors the web flow)
+      if (code === 'auth/user-not-found') {
+        setSent(true);
+        toastSuccess('If an account exists for that email, a reset link is on its way.');
+        return;
+      }
+      const message =
+        code === 'auth/too-many-requests'
+          ? 'Too many attempts. Please wait a few minutes and try again.'
+          : 'Could not send the reset email. Please check the address and try again.';
       setError(message);
       toastError(message);
     } finally {
@@ -104,26 +66,31 @@ export default function PasswordRecoveryScreen() {
     >
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.card}>
-          {/* Progress indicator */}
-          <View style={styles.progress}>
-            {[1, 2, 3].map((s) => (
-              <View
-                key={s}
-                style={[
-                  styles.progressDot,
-                  s <= step && styles.progressDotActive,
-                ]}
-              />
-            ))}
-          </View>
-
           <Text style={styles.title}>Reset Password</Text>
 
-          {/* Step 1: Enter email */}
-          {step === 1 && (
+          {sent ? (
             <>
               <Text style={styles.subtitle}>
-                Enter your email address to receive a password reset code
+                A password reset link has been sent to {email.trim().toLowerCase()}.
+                Open it and choose a new password, then come back and log in.
+              </Text>
+              <TouchableOpacity
+                style={styles.button}
+                onPress={() => router.replace('/login')}
+              >
+                <Text style={styles.buttonText}>Back to Login</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.link}
+                onPress={() => { setSent(false); setError(''); }}
+              >
+                <Text style={styles.linkText}>Use a different email</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={styles.subtitle}>
+                Enter your account email and we&apos;ll send you a link to reset your password.
               </Text>
               <View style={styles.field}>
                 <Text style={styles.label}>Email</Text>
@@ -140,87 +107,11 @@ export default function PasswordRecoveryScreen() {
               {error ? <Text style={styles.error}>{error}</Text> : null}
               <TouchableOpacity
                 style={[styles.button, loading && styles.buttonDisabled]}
-                onPress={handleSendCode}
+                onPress={handleSendLink}
                 disabled={loading}
               >
                 <Text style={styles.buttonText}>
-                  {loading ? 'Sending...' : 'Send Reset Code'}
-                </Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          {/* Step 2: Enter code */}
-          {step === 2 && (
-            <>
-              <Text style={styles.subtitle}>
-                Enter the 6-digit code sent to {email}
-              </Text>
-              <View style={styles.field}>
-                <Text style={styles.label}>Verification Code</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="123456"
-                  value={code}
-                  onChangeText={setCode}
-                  keyboardType="number-pad"
-                  maxLength={6}
-                  autoFocus
-                />
-              </View>
-              {error ? <Text style={styles.error}>{error}</Text> : null}
-              <TouchableOpacity
-                style={[styles.button, loading && styles.buttonDisabled]}
-                onPress={handleResetPassword}
-                disabled={loading}
-              >
-                <Text style={styles.buttonText}>
-                  {loading ? 'Resetting...' : 'Reset Password'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.link}
-                onPress={() => { setStep(1); setError(''); }}
-              >
-                <Text style={styles.linkText}>← Change email</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          {/* Step 3: New password */}
-          {step === 3 && (
-            <>
-              <Text style={styles.subtitle}>
-                Create a new password for your account
-              </Text>
-              <View style={styles.field}>
-                <Text style={styles.label}>New Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="At least 6 characters"
-                  value={newPassword}
-                  onChangeText={setNewPassword}
-                  secureTextEntry
-                />
-              </View>
-              <View style={styles.field}>
-                <Text style={styles.label}>Confirm Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Confirm your password"
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry
-                />
-              </View>
-              {error ? <Text style={styles.error}>{error}</Text> : null}
-              <TouchableOpacity
-                style={[styles.button, loading && styles.buttonDisabled]}
-                onPress={handleResetPassword}
-                disabled={loading}
-              >
-                <Text style={styles.buttonText}>
-                  {loading ? 'Saving...' : 'Save New Password'}
+                  {loading ? 'Sending...' : 'Send Reset Link'}
                 </Text>
               </TouchableOpacity>
             </>
@@ -245,9 +136,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#fde68a',
   },
-  progress: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 20 },
-  progressDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#e5e7eb' },
-  progressDotActive: { backgroundColor: '#f59e0b' },
   title: {
     fontSize: 22,
     fontWeight: 'bold',
