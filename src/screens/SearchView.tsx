@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search as SearchIcon, BookOpen, Tag, MapPin, Heart, Globe } from 'lucide-react';
-import type { User } from '../types';
+import { Search as SearchIcon, BookOpen, MapPin, Heart, Globe } from 'lucide-react';
+
 import { getAcceptedFriends, searchAllBooks, getAllBooks } from '../services/firestoreService';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -220,7 +220,10 @@ export default function SearchView() {
   const hasResultFilters =
     isUsingZipFilter ||
     (!filterZip && maxDistance > 0 && !!currentZip) ||
-    !!languageFilter;
+    !!languageFilter ||
+    // Your own books are always excluded from the list, so the total
+    // must reflect the visible set to avoid a phantom "X of Y".
+    results.some((book) => currentUser?.uid && book.addedBy === currentUser.uid);
 
   return (
     <div className="max-w-4xl mx-auto">

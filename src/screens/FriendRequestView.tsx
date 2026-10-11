@@ -8,6 +8,7 @@ import {
   onFriends,
   acceptFriendRequest,
   declineFriendRequest,
+  getUserById,
 } from '../services/firestoreService';
 import { useToast } from '../contexts/ToastContext';
 import type { FriendRequest, User } from '../types';
