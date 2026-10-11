@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { getUserChats, getUserById } from '../services/firestoreService';
 import type { User } from '../types';
 import type { UserChat } from '../services/firestoreService';
+import MyExchangesView from './MyExchangesView';
 import ChatView from './ChatView';
 
 export interface ChatContextBook {
@@ -75,14 +76,43 @@ export default function ChatListView() {
     );
   }
 
+  // One door: the inbox hosts both conversations and exchange requests.
+  // Deep links can select the tab (?tab=requests) or open a chat (?with=).
+  const activeTab = searchParams.get('tab') === 'requests' ? 'requests' : 'chats';
+  const setActiveTab = (tab: 'chats' | 'requests') => {
+    const next = new URLSearchParams(searchParams);
+    if (tab === 'requests') next.set('tab', 'requests');
+    else next.delete('tab');
+    setSearchParams(next, { replace: true });
+  };
+
   return (
     <div className="max-w-2xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold font-serif text-gray-900">Chats</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Message your fellow readers</p>
+        <h1 className="text-2xl font-bold font-serif text-gray-900">Inbox</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Conversations and borrow requests in one place</p>
       </div>
 
-      {chats.length === 0 ? (
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6 bg-white/80 backdrop-blur-sm border border-amber-100 rounded-xl p-1">
+        {(['chats', 'requests'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
+              activeTab === tab
+                ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {tab === 'chats' ? 'Chats' : 'Requests'}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'requests' ? (
+        <MyExchangesView />
+      ) : chats.length === 0 ? (
         <div className="text-center py-16 bg-white/80 backdrop-blur-sm rounded-xl border border-amber-100">
           <Feather className="w-16 h-16 text-amber-300 mx-auto mb-4" />
           <p className="text-gray-500 font-medium text-lg">No chats yet</p>

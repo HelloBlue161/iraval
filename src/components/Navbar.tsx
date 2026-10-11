@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { BookOpen, Search, Users, MessageSquare, Tag, Settings, LogOut, User } from 'lucide-react';
+import { BookOpen, Search, Users, MessageSquare, Settings, LogOut, User } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -12,7 +12,8 @@ export default function Navbar() {
   const [pendingCount, setPendingCount] = useState(0);
   const [unreadChats, setUnreadChats] = useState(0);
 
-  // Count pending exchange requests (receiverId stores the UID, not email)
+  // Count incoming exchange requests needing action (pending requests +
+  // return requests awaiting the owner's confirmation)
   useEffect(() => {
     if (!user) {
       setPendingCount(0);
@@ -24,7 +25,7 @@ export default function Navbar() {
         const q = query(
           collection(db, 'exchanges'),
           where('receiverId', '==', user.uid),
-          where('status', '==', 'pending')
+          where('status', 'in', ['pending', 'return_requested'])
         );
         const snap = await getDocs(q);
         setPendingCount(snap.size);
@@ -54,10 +55,13 @@ export default function Navbar() {
     { key: 'search', label: 'Search', icon: Search, path: '/search' },
     { key: 'profile', label: 'Profile', icon: User, path: '/profile' },
     { key: 'friends', label: 'Friends', icon: Users, path: '/friends' },
-    { key: 'chats', label: 'Chats', icon: MessageSquare, path: '/chats' },
-    { key: 'exchanges', label: 'Exchanges', icon: Tag, path: '/exchanges' },
+    { key: 'inbox', label: 'Inbox', icon: MessageSquare, path: '/chats' },
     { key: 'settings', label: 'Settings', icon: Settings, path: '/settings' },
   ];
+
+  // One door: the inbox badge combines unread chat messages and
+  // incoming exchange requests needing the user's action.
+  const inboxBadge = unreadChats + pendingCount;
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -97,14 +101,9 @@ export default function Navbar() {
                 }`}
               >
                 <Icon className={`w-4 h-4 ${active ? 'text-amber-600' : ''}`} />
-                {tab.key === 'exchanges' && pendingCount > 0 && (
+                {tab.key === 'inbox' && inboxBadge > 0 && (
                   <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                    {pendingCount > 9 ? '9+' : pendingCount}
-                  </span>
-                )}
-                {tab.key === 'chats' && unreadChats > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                    {unreadChats > 9 ? '9+' : unreadChats}
+                    {inboxBadge > 9 ? '9+' : inboxBadge}
                   </span>
                 )}
                 <span className="mt-0.5">{tab.label}</span>
@@ -142,14 +141,9 @@ export default function Navbar() {
               >
                 <Icon className={`w-5 h-5 ${active ? 'text-amber-600' : 'text-gray-400'}`} />
                 {tab.label}
-                {tab.key === 'exchanges' && pendingCount > 0 && (
+                {tab.key === 'inbox' && inboxBadge > 0 && (
                   <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full px-2 py-0.5">
-                    {pendingCount > 9 ? '9+' : pendingCount}
-                  </span>
-                )}
-                {tab.key === 'chats' && unreadChats > 0 && (
-                  <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full px-2 py-0.5">
-                    {unreadChats > 9 ? '9+' : unreadChats}
+                    {inboxBadge > 9 ? '9+' : inboxBadge}
                   </span>
                 )}
                 {active && (

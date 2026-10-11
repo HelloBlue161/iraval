@@ -21,6 +21,7 @@ export default function SearchView() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [filterZip, setFilterZip] = useState('');
   const [maxDistance, setMaxDistance] = useState<number>(50);
+  const [geoFailed, setGeoFailed] = useState(false);
   const [languageFilter, setLanguageFilter] = useState('');
   const [friendsFirst, setFriendsFirst] = useState(false);
   const [sortByName, setSortByName] = useState(false);
@@ -34,8 +35,24 @@ export default function SearchView() {
   const geocodeZip = async (zip: string): Promise<{ lat: number; lng: number } | null> => {
     const cached = geocodeCache.current.get(zip);
     if (cached) return cached;
+    // Primary: zippopotam.us — purpose-built for zip -> coords, CORS-friendly.
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&postalcode=${zip}&limit=1`);
+      const res = await fetch(`https://api.zippopotam.us/us/${zip}`);
+      if (res.ok) {
+        const data = await res.json();
+        const place = data.places?.[0];
+        if (place?.latitude && place?.longitude) {
+          const coords = { lat: parseFloat(place.latitude), lng: parseFloat(place.longitude) };
+          geocodeCache.current.set(zip, coords);
+          return coords;
+        }
+      }
+    } catch (e) {
+      console.warn('Zippopotam failed for', zip, e);
+    }
+    // Fallback: Nominatim (restricted to US postcodes for accuracy)
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&postalcode=${zip}&countrycodes=us&limit=1`);
       const data = await res.json();
       if (data.length > 0) {
         const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
@@ -144,7 +161,8 @@ export default function SearchView() {
         if (myCoords) {
           const filtered = foundUsers.filter((u) => {
             const uCoords = geocodeCache.current.get(u.zipCode);
-            if (!uCoords) return false;
+            // If we can't locate a reader, keep them rather than hiding them
+            if (!uCoords) return true;
             const dist = haversineMiles(myCoords.lat, myCoords.lng, uCoords.lat, uCoords.lng);
             return dist <= maxDistance;
           });
@@ -211,6 +229,10 @@ export default function SearchView() {
       });
       await Promise.all(geocodePromises);
 
+      // If we can't locate the user's own zip, the distance filter can't
+      // run — say so instead of silently showing everything.
+      setGeoFailed(!!(!filterZip && maxDistance > 0 && currentZip && !geocodeCache.current.get(currentZip)));
+
       // Now filter and sort synchronously using cached coords
       const result = results.filter((book) => {
         // Zip code filter (exclusive with distance)
@@ -241,7 +263,7 @@ export default function SearchView() {
           if (aIsFriend && !bIsFriend) return -1;
           if (!aIsFriend && bIsFriend) return 1;
         }
-        if (sortByName) return a.addedByFullName.localeCompare(b.addedByFullName);
+        if (sortByName) return (a.addedByUsername || a.addedByFullName).localeCompare(b.addedByUsername || b.addedByFullName);
         return 0;
       });
       setFilteredResults(result);
@@ -305,6 +327,9 @@ export default function SearchView() {
             className="w-24 accent-amber-500 disabled:opacity-40 disabled:cursor-not-allowed"
           />
           <span className="text-xs text-gray-400">({maxDistance === 0 ? 'All' : `${maxDistance} mi`})</span>
+          {geoFailed && !isUsingZipFilter && (
+            <span className="text-xs text-amber-600">Couldn't locate your zip — distance filter is off</span>
+          )}
         </div>
 
         {/* Zip code filter (exclusive) */}
@@ -425,7 +450,7 @@ export default function SearchView() {
                       <p className="text-xs text-gray-500 mt-0.5">{book.author}</p>
                       {book.language && <p className="text-xs text-gray-400 mt-0.5">{book.language}</p>}
                       <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs text-amber-600">by {book.addedByFullName}</span>
+                        <span className="text-xs text-amber-600">@{book.addedByUsername || book.addedByFullName}</span>
                         {book.addedByCity && <span className="text-xs text-gray-400">{book.addedByCity}</span>}
                         {dist !== null && <span className="text-xs text-gray-400">· {dist} mi</span>}
                       </div>
@@ -476,7 +501,7 @@ export default function SearchView() {
                       <p className="text-xs text-gray-500 mt-0.5">{book.author}</p>
                       {book.language && <p className="text-xs text-gray-400 mt-0.5">{book.language}</p>}
                       <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs text-amber-600">by {book.addedByFullName}</span>
+                        <span className="text-xs text-amber-600">@{book.addedByUsername || book.addedByFullName}</span>
                         {book.addedByCity && <span className="text-xs text-gray-400">{book.addedByCity}</span>}
                         {dist !== null && <span className="text-xs text-gray-400">· {dist} mi</span>}
                       </div>
@@ -548,11 +573,11 @@ export default function SearchView() {
                   className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-amber-50 transition text-left border border-gray-100 hover:border-amber-200"
                 >
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-200 to-orange-200 flex items-center justify-center text-amber-700 font-bold text-sm font-serif">
-                    {(u.fullName || '??').substring(0, 2).toUpperCase()}
+                    {(u.username || u.fullName || '??').substring(0, 2).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="font-medium text-gray-900">{u.fullName}</p>
+                      <p className="font-medium text-gray-900">@{u.username || u.fullName}</p>
                       {isFriend && (
                         <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Friend</span>
                       )}

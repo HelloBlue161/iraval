@@ -44,6 +44,7 @@ export default function ExchangeRequestView({ recipient, book, onClose }: Exchan
         bookTitle: book.title,
         bookAuthor: book.author,
         bookCoverImageURL: book.coverImageURL,
+        bookLanguage: book.language,
         senderId: user.uid,
         receiverId: recipient.id,
         note: note.trim() || undefined,

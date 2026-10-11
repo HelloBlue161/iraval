@@ -119,11 +119,12 @@ export default function LibraryView() {
       await updateBook(user.uid, editingBook.id, {
         title: editTitle.trim(),
         author: editAuthor.trim(),
+        language: editLanguage,
       });
       setBooks((prev) =>
         prev.map((b) =>
           b.id === editingBook.id
-            ? { ...b, title: editTitle.trim(), author: editAuthor.trim() }
+            ? { ...b, title: editTitle.trim(), author: editAuthor.trim(), language: editLanguage }
             : b
         )
       );

@@ -11,6 +11,7 @@ import {
   serverTimestamp,
   increment,
   deleteField,
+  writeBatch,
   type Unsubscribe,
   getDoc,
   getDocs,
@@ -122,6 +123,7 @@ export async function updateBook(uid: string, bookId: string, updates: {
   title?: string;
   author?: string;
   coverImageURL?: string;
+  language?: string;
 }): Promise<void> {
   await updateDoc(doc(db, 'users', uid, 'books', bookId), updates);
 }
@@ -290,6 +292,27 @@ export async function markChatAsRead(chatId: string, uid: string): Promise<void>
     { unreadBy: { [uid]: 0 } },
     { merge: true }
   );
+}
+
+/**
+ * Delete a conversation: removes all its messages plus the parent chat doc.
+ * Rules already let any participant delete these. The thread is shared, so
+ * it disappears for both sides; if either person messages again later,
+ * a fresh thread is created automatically.
+ */
+export async function deleteChat(chatId: string): Promise<void> {
+  const msgsSnap = await getDocs(collection(db, 'chats', chatId, 'messages'));
+  // Delete in chunks to stay under the 500-op batch limit
+  const docs = msgsSnap.docs;
+  for (let i = 0; i < docs.length; i += 400) {
+    const batch = writeBatch(db);
+    docs.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
+    batch.delete(doc(db, 'chats', chatId));
+    await batch.commit();
+  }
+  if (docs.length === 0) {
+    await deleteDoc(doc(db, 'chats', chatId));
+  }
 }
 
 /** Realtime total unread chat messages for the navbar badge. */
@@ -520,6 +543,7 @@ export async function sendExchangeRequest(exchange: {
   bookTitle: string;
   bookAuthor: string;
   bookCoverImageURL?: string;
+  bookLanguage?: string;
   senderId: string;
   receiverId: string;
   note?: string;
@@ -537,6 +561,9 @@ export async function sendExchangeRequest(exchange: {
   };
   if (exchange.bookCoverImageURL) {
     data.bookCoverImageURL = exchange.bookCoverImageURL;
+  }
+  if (exchange.bookLanguage) {
+    data.bookLanguage = exchange.bookLanguage;
   }
   if (exchange.note) {
     data.note = exchange.note;
@@ -668,7 +695,22 @@ export async function declineExchange(exchangeId: string, note?: string): Promis
   });
 }
 
-export async function returnExchange(exchangeId: string): Promise<void> {
+/**
+ * Borrower hands the book back: marks the exchange as return-requested.
+ * The book stays 'lent' until the owner confirms receipt.
+ */
+export async function requestReturn(exchangeId: string): Promise<void> {
+  await updateDoc(doc(db, 'exchanges', exchangeId), {
+    status: 'return_requested',
+    returnRequestedAt: new Date(),
+  });
+}
+
+/**
+ * Owner confirms the book is back: exchange closes and the book
+ * becomes available in the owner's library again.
+ */
+export async function confirmReturn(exchangeId: string): Promise<void> {
   const exRef = doc(db, 'exchanges', exchangeId);
   const exSnap = await getDoc(exRef);
   if (!exSnap.exists()) throw new Error('Exchange not found');
@@ -692,9 +734,10 @@ export async function returnExchange(exchangeId: string): Promise<void> {
 
 // ── Helpers for filtering unavailable books ─────────────────────
 
-// Returns a Set of bookIds that have any pending or accepted exchange
+// Returns a Set of bookIds that have any pending, accepted, or
+// return-requested exchange (the book is still out in all three cases)
 async function getUnavailableBookIds(): Promise<Set<string>> {
-  const q = query(collection(db, 'exchanges'), where('status', 'in', ['pending', 'accepted'] as const));
+  const q = query(collection(db, 'exchanges'), where('status', 'in', ['pending', 'accepted', 'return_requested'] as const));
   const snap = await getDocs(q);
   const ids = new Set<string>();
   snap.forEach((d) => {
@@ -841,7 +884,7 @@ export function onBorrowedBooks(
   const q = query(
     collection(db, 'exchanges'),
     where('senderId', '==', uid),
-    where('status', '==', 'accepted')
+    where('status', 'in', ['accepted', 'return_requested'] as const)
   );
   
   const borrowedBooks: Book[] = [];
@@ -865,7 +908,7 @@ export function onBorrowedBooks(
         addedBy: data.receiverId,
         addedAt: data.requestedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
         coverImageURL: data.bookCoverImageURL || '',
-        language: '',
+        language: data.bookLanguage || '',
         bookStatus: 'borrowed' as const,
       });
     });

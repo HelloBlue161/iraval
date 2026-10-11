@@ -11,7 +11,6 @@ import LibraryView from './screens/LibraryView';
 import SearchView from './screens/SearchView';
 import FriendRequestView from './screens/FriendRequestView';
 import ChatListView from './screens/ChatListView';
-import MyExchangesView from './screens/MyExchangesView';
 import SettingsView from './screens/SettingsView';
 import ProfileView from './screens/ProfileView';
 
@@ -94,7 +93,7 @@ function MainLayout() {
             <Route path="/profile" element={<ProfileView />} />
             <Route path="/friends" element={<FriendRequestView />} />
             <Route path="/chats" element={<ChatListView />} />
-            <Route path="/exchanges" element={<MyExchangesView />} />
+            <Route path="/exchanges" element={<Navigate to="/chats?tab=requests" replace />} />
             <Route path="/settings" element={<SettingsView />} />
             <Route path="*" element={<Navigate to="/library" replace />} />
           </Routes>

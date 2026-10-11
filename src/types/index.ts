@@ -67,7 +67,7 @@ export interface ChatSession {
   unreadCount: number;
 }
 
-export type ExchangeStatus = 'pending' | 'accepted' | 'declined' | 'expired';
+export type ExchangeStatus = 'pending' | 'accepted' | 'declined' | 'expired' | 'returned' | 'return_requested';
 
 export interface Exchange {
   id: string;
@@ -75,6 +75,7 @@ export interface Exchange {
   bookTitle: string;
   bookAuthor: string;
   bookCoverImageURL?: string;
+  bookLanguage?: string;
   senderId: string;
   receiverId: string;
   status: ExchangeStatus;
