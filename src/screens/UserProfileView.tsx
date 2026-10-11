@@ -5,10 +5,9 @@ import type { User, FriendRequestStatus } from '../types';
 import type { SearchResult } from '../services/firestoreService';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { sendFriendRequest, checkPendingExchange, isBookUnavailable } from '../services/firestoreService';
+import { sendFriendRequest } from '../services/firestoreService';
 import { getDocs, query, where, collection } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import ExchangeRequestView from './ExchangeRequestView';
 
 interface UserProfileViewProps {
   user: User;
@@ -23,12 +22,9 @@ export default function UserProfileView({ user, book, onClose }: UserProfileView
   const [friendshipStatus, setFriendshipStatus] = useState<FriendRequestStatus>('none');
   const [statusLoading, setStatusLoading] = useState(true);
   const [sendingRequest, setSendingRequest] = useState(false);
-  const [showExchange, setShowExchange] = useState(false);
-  const [pendingExchange, setPendingExchange] = useState(false);
-  const [bookUnavailable, setBookUnavailable] = useState(false);
 
-  // One inbox: conversations live in the Chats tab. Carry the book context
-  // so the chat opens anchored to this book.
+  // One inbox: conversations live in the Chats tab. Borrowing starts from
+  // the chat — the "Request to Borrow" button lives beneath the conversation.
   const handleSendMessage = () => {
     const params = new URLSearchParams({ with: user.id });
     if (book) {
@@ -38,17 +34,6 @@ export default function UserProfileView({ user, book, onClose }: UserProfileView
     onClose();
     navigate(`/chats?${params.toString()}`);
   };
-
-  useEffect(() => {
-    if (!currentUser || !book) { setPendingExchange(false); return; }
-    checkPendingExchange(currentUser.uid, user.id, book.title).then((hasPending) => {
-      setPendingExchange(hasPending);
-    });
-    // Also check if the book itself is unavailable (lent/pending to anyone)
-    isBookUnavailable(book.bookId, user.id).then((unavailable) => {
-      setBookUnavailable(unavailable);
-    });
-  }, [currentUser?.uid, user.id, book?.bookId, book?.title]);
 
   useEffect(() => {
     if (!currentUser) { setStatusLoading(false); return; }
@@ -167,34 +152,7 @@ export default function UserProfileView({ user, book, onClose }: UserProfileView
             <MessageSquare className="w-4 h-4" />
             Send Message
           </button>
-          <p className="text-xs text-gray-400 text-center">Ask questions about the book, share availability, or chat freely</p>
-
-          {book && (
-            <div>
-              {bookUnavailable ? (
-                <div className="w-full flex items-center justify-center gap-2 bg-gray-100 border-2 border-gray-200 text-gray-500 py-3 rounded-xl font-medium">
-                  <Tag className="w-4 h-4" />
-                  This Book is Currently Unavailable
-                </div>
-              ) : pendingExchange ? (
-                <div className="w-full flex items-center justify-center gap-2 bg-amber-100 border-2 border-amber-200 text-amber-700 py-3 rounded-xl font-medium">
-                  <Tag className="w-4 h-4" />
-                  Request to Borrow Already Sent
-                </div>
-              ) : (
-                <button
-                  onClick={() => setShowExchange(true)}
-                  className="w-full flex items-center justify-center gap-2 bg-white border-2 border-amber-300 text-amber-700 py-3 rounded-xl font-medium hover:bg-amber-50 transition"
-                >
-                  <Tag className="w-4 h-4" />
-                  Request to Borrow
-                </button>
-              )}
-              <p className="text-xs text-gray-400 text-center mt-1">
-                {bookUnavailable ? 'This book is involved in an active exchange' : pendingExchange ? 'Waiting for the owner to respond' : 'Formal borrow request — the owner must accept before you can borrow'}
-              </p>
-            </div>
-          )}
+          <p className="text-xs text-gray-400 text-center">Ask about the book, agree on pickup, then request the borrow from inside the chat</p>
 
           <button
             onClick={handleSendFriendRequest}
@@ -232,15 +190,6 @@ export default function UserProfileView({ user, book, onClose }: UserProfileView
           )}
         </div>
       </div>
-
-      {/* Exchange request modal */}
-      {showExchange && book && (
-        <ExchangeRequestView
-          recipient={user}
-          book={book}
-          onClose={() => setShowExchange(false)}
-        />
-      )}
     </div>
   );
 }

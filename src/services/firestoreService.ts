@@ -467,6 +467,68 @@ export async function searchUsersWithBook(
   return results;
 }
 
+/**
+ * Readers holding a book title, each paired with THEIR copy's SearchResult
+ * (so borrow requests target the right owner's book document).
+ */
+export async function searchReadersWithBook(
+  bookTitle: string,
+  excludeUid?: string
+): Promise<Array<{ user: User; book: SearchResult }>> {
+  const unavailableIds = await getUnavailableBookIds();
+
+  const usersRef = collection(db, 'users');
+  const usersSnap = await getDocs(usersRef);
+
+  const results: Array<{ user: User; book: SearchResult }> = [];
+  const titleLower = bookTitle.toLowerCase().trim();
+
+  if (!titleLower) return results;
+
+  for (const userDoc of usersSnap.docs) {
+    const uid = userDoc.id;
+    const userData = userDoc.data();
+
+    // Skip duplicate username-based user documents (e.g. "user_bob")
+    if (userData && userData.uid && userData.uid !== uid) continue;
+
+    // Skip the current user
+    if (excludeUid && uid === excludeUid) continue;
+
+    const booksRef = collection(db, 'users', uid, 'books');
+    const booksSnap = await getDocs(booksRef);
+
+    for (const bookDoc of booksSnap.docs) {
+      const bookData = bookDoc.data();
+      if (bookData.title?.toLowerCase().includes(titleLower)) {
+        // Skip if this copy has an active exchange (lent/pending/borrowed)
+        if (unavailableIds.has(bookDoc.id)) continue;
+        if (!results.find((r) => r.user.id === uid)) {
+          const user = { id: uid, ...(userData as Omit<User, 'id'>) };
+          results.push({
+            user,
+            book: {
+              bookId: bookDoc.id,
+              title: bookData.title,
+              author: bookData.author,
+              coverImageURL: bookData.coverImageURL || '',
+              addedBy: uid,
+              addedByUsername: userData.username || '',
+              addedByFullName: userData.fullName || '',
+              addedByCity: userData.city || '',
+              addedByZipCode: userData.zipCode || '',
+              language: bookData.language || '',
+            },
+          });
+        }
+        break;
+      }
+    }
+  }
+
+  return results;
+}
+
 export function onFriends(
   uid: string,
   callback: (friends: User[]) => void

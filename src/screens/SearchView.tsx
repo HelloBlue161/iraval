@@ -1,32 +1,28 @@
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search as SearchIcon, BookOpen, Tag, MapPin, Heart, Globe } from 'lucide-react';
 import type { User } from '../types';
-import { getUserById, searchUsersWithBook, searchAllBooks, getAllBooks, getAcceptedFriends } from '../services/firestoreService';
+import { getAcceptedFriends, searchAllBooks, getAllBooks } from '../services/firestoreService';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { haversineMiles, LANGUAGES } from '../types';
-import UserProfileView from './UserProfileView';
-import ExchangeRequestView from './ExchangeRequestView';
 
 type SearchResult = import('../services/firestoreService').SearchResult;
 
 export default function SearchView() {
   const auth = useAuth();
+  const navigate = useNavigate();
   const { info: toastInfo } = useToast();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedBook, setSelectedBook] = useState<SearchResult | null>(null);
-  const [users, setUsers] = useState<User[]>([]);
-  const [usersLoading, setUsersLoading] = useState(false);
   const [filterZip, setFilterZip] = useState('');
-  const [maxDistance, setMaxDistance] = useState<number>(50);
+  // Distance filter is off by default — no silent exclusion of books.
+  const [maxDistance, setMaxDistance] = useState<number>(0);
   const [geoFailed, setGeoFailed] = useState(false);
   const [languageFilter, setLanguageFilter] = useState('');
   const [friendsFirst, setFriendsFirst] = useState(false);
   const [sortByName, setSortByName] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [showExchange, setShowExchange] = useState(false);
   const [filteredResults, setFilteredResults] = useState<SearchResult[]>([]);
   const [friendIds, setFriendIds] = useState<Set<string>>(new Set());
   const searchDebounce = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -146,66 +142,9 @@ export default function SearchView() {
     }
   };
 
-  // Find readers for a book (with distance filter via dynamic geocoding)
-  const findUsers = async (book: SearchResult) => {
-    setSelectedBook(book);
-    setUsersLoading(true);
-    setUsers([]);
-    try {
-      const currentUserUid = currentUser?.uid || '';
-      let foundUsers = await searchUsersWithBook(book.title, currentUserUid);
-
-      // Apply distance filter with dynamic geocoding
-      if (!filterZip && maxDistance > 0 && currentZip) {
-        const myCoords = await geocodeZip(currentZip);
-        if (myCoords) {
-          const filtered = foundUsers.filter((u) => {
-            const uCoords = geocodeCache.current.get(u.zipCode);
-            // If we can't locate a reader, keep them rather than hiding them
-            if (!uCoords) return true;
-            const dist = haversineMiles(myCoords.lat, myCoords.lng, uCoords.lat, uCoords.lng);
-            return dist <= maxDistance;
-          });
-          foundUsers = filtered;
-        }
-      }
-
-      // Apply zip code filter
-      if (filterZip) {
-        foundUsers = foundUsers.filter((u) => u.zipCode === filterZip);
-      }
-
-      // Sort
-      foundUsers.sort((a, b) => {
-        if (friendsFirst) {
-          const aIsFriend = friendIds.has(a.id);
-          const bIsFriend = friendIds.has(b.id);
-          if (aIsFriend && !bIsFriend) return -1;
-          if (!aIsFriend && bIsFriend) return 1;
-        }
-        if (sortByName) return a.fullName.localeCompare(b.fullName);
-        return 0;
-      });
-
-      setUsers(foundUsers);
-      if (foundUsers.length > 0) {
-        toastInfo(`Found ${foundUsers.length} reader${foundUsers.length > 1 ? 's' : ''} with this book`);
-      } else {
-        toastInfo('No readers found with this book. Try another title.');
-      }
-    } catch (err) {
-      console.error('Find readers failed:', err);
-      setUsers([]);
-    } finally {
-      setUsersLoading(false);
-    }
-  };
-
-  const handleUserSelect = async (uid: string) => {
-    const userData = await getUserById(uid);
-    if (userData) {
-      setSelectedUser(userData);
-    }
+  // Readers now live on the dedicated book page (/book/:ownerUid/:bookId).
+  const openBookPage = (book: SearchResult) => {
+    navigate(`/book/${book.addedBy}/${book.bookId}`);
   };
 
   // Filter and sort results (async - pre-geocodes all zip codes)
@@ -235,6 +174,8 @@ export default function SearchView() {
 
       // Now filter and sort synchronously using cached coords
       const result = results.filter((book) => {
+        // Never show your own books — you can't borrow from yourself
+        if (currentUser?.uid && book.addedBy === currentUser.uid) return false;
         // Zip code filter (exclusive with distance)
         if (filterZip && book.addedByZipCode !== filterZip) return false;
         // Distance filter
@@ -349,7 +290,6 @@ export default function SearchView() {
             onChange={(e) => {
               const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 5);
               handleZipChange(val);
-              if (!val && maxDistance === 0) setMaxDistance(50);
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && filterZip) {
@@ -442,7 +382,7 @@ export default function SearchView() {
               return (
                 <button
                   key={`${book.addedBy}-${book.bookId}`}
-                  onClick={() => findUsers(book)}
+                  onClick={() => openBookPage(book)}
                   className="w-full bg-white/80 backdrop-blur-sm rounded-xl border border-amber-100 overflow-hidden hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 group text-left"
                 >
                   <div className="flex">
@@ -493,7 +433,7 @@ export default function SearchView() {
               return (
                 <button
                   key={`${book.addedBy}-${book.bookId}`}
-                  onClick={() => findUsers(book)}
+                  onClick={() => openBookPage(book)}
                   className="w-full bg-white/80 backdrop-blur-sm rounded-xl border border-amber-100 overflow-hidden hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 group text-left"
                 >
                   <div className="flex">
@@ -530,95 +470,6 @@ export default function SearchView() {
       {/* No filtered results but unfiltered ones exist */}
       {!loading && results.length > 0 && filteredResults.length === 0 && (
         <p className="text-gray-500 text-center py-4">No books match your filters. Try widening the distance or removing filters.</p>
-      )}
-
-      {/* Users with book section (Find Readers) */}
-      {selectedBook && (() => {
-        const uFiltered = users.filter((u) => {
-          if (filterZip && u.zipCode !== filterZip) return false;
-          // Distance already applied in findUsers; just check cached coords exist
-          if (!filterZip && maxDistance > 0 && currentZip) {
-            const myC = geocodeCache.current.get(currentZip);
-            const uC = geocodeCache.current.get(u.zipCode);
-            if (!myC || !uC) return false;
-          }
-          return true;
-        }).sort((a, b) => {
-          if (friendsFirst) {
-            const aIsFriend = friendIds.has(a.id);
-            const bIsFriend = friendIds.has(b.id);
-            if (aIsFriend && !bIsFriend) return -1;
-            if (!aIsFriend && bIsFriend) return 1;
-          }
-          if (sortByName) return a.fullName.localeCompare(b.fullName);
-          return 0;
-        });
-
-        return (
-        <div className="mt-6 bg-white/80 backdrop-blur-sm rounded-xl border border-amber-100 p-6 shadow-sm">
-          <h2 className="text-lg font-bold font-serif text-gray-900 mb-4 flex items-center gap-2">
-            <Tag className="w-5 h-5 text-amber-500" />
-            Readers with "{selectedBook.title}"
-          </h2>
-
-          {usersLoading ? (
-            <div className="text-center py-8">
-              <div className="inline-block w-6 h-6 border-2 border-amber-600 border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : uFiltered.length === 0 ? (
-            <p className="text-gray-500 text-center py-4">
-              {usersLoading ? '' : users.length === 0 ? 'No readers found with this book' : 'No readers match your filters'}
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {uFiltered.map((u) => {
-                const isFriend = friendIds.has(u.id);
-
-                return (
-                <button
-                  key={u.id}
-                  onClick={() => handleUserSelect(u.id)}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-amber-50 transition text-left border border-gray-100 hover:border-amber-200"
-                >
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-200 to-orange-200 flex items-center justify-center text-amber-700 font-bold text-sm font-serif">
-                    {(u.username || u.fullName || '??').substring(0, 2).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium text-gray-900">@{u.username || u.fullName}</p>
-                      {isFriend && (
-                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Friend</span>
-                      )}
-                    </div>
-                    <p className="text-sm text-gray-500">
-                      {u.city || 'N/A'}
-                    </p>
-                  </div>
-                </button>
-              );
-              })}
-            </div>
-          )}
-        </div>
-        );
-      })()}
-
-      {/* User profile modal */}
-      {selectedUser && (
-        <UserProfileView
-          user={selectedUser}
-          book={selectedBook}
-          onClose={() => setSelectedUser(null)}
-        />
-      )}
-
-      {/* Exchange request modal */}
-      {showExchange && selectedBook && selectedUser && (
-        <ExchangeRequestView
-          recipient={selectedUser}
-          book={selectedBook}
-          onClose={() => setShowExchange(false)}
-        />
       )}
     </div>
   );

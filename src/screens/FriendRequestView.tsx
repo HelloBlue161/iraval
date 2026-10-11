@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Users, Check, X, MessageSquare, Heart } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -7,20 +8,17 @@ import {
   onFriends,
   acceptFriendRequest,
   declineFriendRequest,
-  getUserById,
 } from '../services/firestoreService';
 import { useToast } from '../contexts/ToastContext';
 import type { FriendRequest, User } from '../types';
-import ChatView from './ChatView';
 
 export default function FriendRequestView() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const { success: toastSuccess } = useToast();
   const [incomingRequests, setIncomingRequests] = useState<FriendRequest[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<FriendRequest[]>([]);
   const [friends, setFriends] = useState<User[]>([]);
-  const [showChat, setShowChat] = useState(false);
-  const [chatUser, setChatUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -55,12 +53,9 @@ export default function FriendRequestView() {
     await declineFriendRequest(requestId);
   };
 
-  const handleOpenChat = async (senderId: string) => {
-    const sender = await getUserById(senderId);
-    if (sender) {
-      setChatUser(sender);
-      setShowChat(true);
-    }
+  // One inbox: friend chats open in the Inbox, not a modal.
+  const handleOpenChat = (uid: string) => {
+    navigate(`/chats?with=${uid}`);
   };
 
   if (loading) {
@@ -132,10 +127,7 @@ export default function FriendRequestView() {
             {friends.map((friend) => (
               <button
                 key={friend.id}
-                onClick={() => {
-                  setChatUser(friend);
-                  setShowChat(true);
-                }}
+                onClick={() => handleOpenChat(friend.id)}
                 className="w-full flex items-center gap-3 p-3 bg-white/80 backdrop-blur-sm rounded-xl border border-amber-100 hover:border-amber-200 hover:bg-amber-50/50 transition text-left"
               >
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-200 to-orange-200 flex items-center justify-center text-amber-700 font-bold text-sm font-serif">
@@ -151,14 +143,6 @@ export default function FriendRequestView() {
           </div>
         )}
       </div>
-
-      {/* Chat modal */}
-      {showChat && chatUser && user && (
-        <ChatView
-          recipient={chatUser}
-          onClose={() => setShowChat(false)}
-        />
-      )}
     </div>
   );
 }

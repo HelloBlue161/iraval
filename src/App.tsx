@@ -9,6 +9,7 @@ import TermsView from './screens/TermsView';
 import PasswordRecoveryView from './screens/PasswordRecoveryView';
 import LibraryView from './screens/LibraryView';
 import SearchView from './screens/SearchView';
+import BookDetailView from './screens/BookDetailView';
 import FriendRequestView from './screens/FriendRequestView';
 import ChatListView from './screens/ChatListView';
 import SettingsView from './screens/SettingsView';
@@ -90,6 +91,7 @@ function MainLayout() {
           <Routes>
             <Route path="/library" element={<LibraryView />} />
             <Route path="/search" element={<SearchView />} />
+            <Route path="/book/:ownerUid/:bookId" element={<BookDetailView />} />
             <Route path="/profile" element={<ProfileView />} />
             <Route path="/friends" element={<FriendRequestView />} />
             <Route path="/chats" element={<ChatListView />} />

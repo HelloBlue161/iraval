@@ -137,14 +137,6 @@ export default function ChatView({ recipient, contextBook, onClose }: ChatViewPr
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {requestBook && (
-              <button
-                onClick={handleRequestBook}
-                className="text-xs font-medium text-amber-700 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-lg transition"
-              >
-                Request Book
-              </button>
-            )}
             <button
               onClick={() => setConfirmingDelete(true)}
               className="text-gray-400 hover:text-red-600 transition"
@@ -229,7 +221,7 @@ export default function ChatView({ recipient, contextBook, onClose }: ChatViewPr
         </div>
 
         {/* Input */}
-        <div className="flex items-center gap-2 px-4 py-3 border-t border-amber-100 bg-white/80 backdrop-blur-sm rounded-b-2xl">
+        <div className="flex items-center gap-2 px-4 py-3 border-t border-amber-100 bg-white/80 backdrop-blur-sm">
           <input
             type="text"
             value={newMessage}
@@ -246,6 +238,29 @@ export default function ChatView({ recipient, contextBook, onClose }: ChatViewPr
             <Send className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Borrow request lives beneath the chat: discuss first, request when ready */}
+        {requestBook && (
+          <div className="px-4 pb-3 bg-white/80 backdrop-blur-sm rounded-b-2xl">
+            {pendingExchanges.some((ex) => ex.bookId === contextBook?.id) ? (
+              <div className="w-full flex items-center justify-center gap-2 bg-amber-50 border border-amber-200 text-amber-700 py-2.5 rounded-xl text-sm font-medium">
+                <Tag className="w-4 h-4" />
+                Borrow request sent — waiting for the owner
+              </div>
+            ) : (
+              <button
+                onClick={handleRequestBook}
+                className="w-full flex flex-col items-center justify-center bg-white border-2 border-amber-300 text-amber-700 py-2.5 rounded-xl font-medium hover:bg-amber-50 transition"
+              >
+                <span className="flex items-center gap-2 text-sm">
+                  <Tag className="w-4 h-4" />
+                  Request to Borrow
+                </span>
+                <span className="text-[11px] text-amber-600/70 font-normal">tap once you're ready</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* In-chat exchange request */}
