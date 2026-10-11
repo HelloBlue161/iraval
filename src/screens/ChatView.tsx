@@ -1,13 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { X, Send, Feather, Tag, Trash2 } from 'lucide-react';
+import { X, Send, Feather, Tag, Trash2, Check } from 'lucide-react';
 import type { Message } from '../types';
 import type { Exchange } from '../types';
 import { useAuth } from '../contexts/AuthContext';
-import { getChatId, onChatMessages, sendMessage as sendMsg, markChatAsRead, onUserExchanges, getUserById, deleteChat } from '../services/firestoreService';
-import ExchangeRequestView from './ExchangeRequestView';
-import type { SearchResult } from '../services/firestoreService';
-import type { User } from '../types';
+import { useToast } from '../contexts/ToastContext';
+import { getChatId, onChatMessages, sendMessage as sendMsg, markChatAsRead, onUserExchanges, acceptExchange, declineExchange, deleteChat } from '../services/firestoreService';
 
 export interface ChatContextBook {
   id: string;
@@ -22,11 +19,9 @@ interface ChatViewProps {
 
 export default function ChatView({ recipient, contextBook, onClose }: ChatViewProps) {
   const { user } = useAuth();
-  const navigate = useNavigate();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [showRequest, setShowRequest] = useState(false);
-  const [requestRecipient, setRequestRecipient] = useState<User | null>(null);
   const [pendingExchanges, setPendingExchanges] = useState<Exchange[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -79,12 +74,23 @@ export default function ChatView({ recipient, contextBook, onClose }: ChatViewPr
     }
   };
 
-  const handleRequestBook = async () => {
-    // ExchangeRequestView needs the full user record
-    const u = await getUserById(recipient.id);
-    if (u) {
-      setRequestRecipient(u);
-      setShowRequest(true);
+  // Decide on a pending borrow request right from the conversation. One
+  // card per request, so multiple books from the same lender stay clear.
+  const handleAcceptRequest = async (id: string) => {
+    try {
+      await acceptExchange(id);
+      toastSuccess('Request accepted — the book is marked as lent.');
+    } catch {
+      toastError('Failed to accept request.');
+    }
+  };
+
+  const handleDeclineRequest = async (id: string) => {
+    try {
+      await declineExchange(id);
+      toastSuccess('Request declined.');
+    } catch {
+      toastError('Failed to decline request.');
     }
   };
 
@@ -102,20 +108,6 @@ export default function ChatView({ recipient, contextBook, onClose }: ChatViewPr
   };
 
   if (!user) return null;
-
-  const requestBook: SearchResult | null = contextBook
-    ? {
-        bookId: contextBook.id,
-        title: contextBook.title,
-        author: '',
-        coverImageURL: '',
-        addedBy: recipient.id,
-        addedByUsername: '',
-        addedByFullName: recipient.fullName,
-        addedByCity: '',
-        addedByZipCode: '',
-      }
-    : null;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -171,22 +163,44 @@ export default function ChatView({ recipient, contextBook, onClose }: ChatViewPr
           </div>
         )}
 
-        {/* Pending exchange banner */}
+        {/* Pending borrow requests: one card per book, with Accept/Decline
+            for the owner. Stays until a decision is made. */}
         {pendingExchanges.length > 0 && (
-          <button
-            onClick={() => {
-              onClose();
-              navigate('/chats?tab=requests');
-            }}
-            className="mx-3 mt-2 flex items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 hover:bg-amber-100 transition text-left"
-          >
-            <Tag className="w-3.5 h-3.5 flex-shrink-0" />
-            <span className="truncate">
-              {pendingExchanges.length === 1
-                ? `Borrow request pending: ${pendingExchanges[0].bookTitle || 'a book'} — tap to review`
-                : `${pendingExchanges.length} borrow requests pending — tap to review`}
-            </span>
-          </button>
+          <div className="px-3 pt-2 space-y-2 bg-white/80 backdrop-blur-sm">
+            {pendingExchanges.map((ex) => {
+              const isOwner = ex.receiverId === user.uid;
+              return (
+                <div
+                  key={ex.id}
+                  className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2"
+                >
+                  <Tag className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-amber-900 truncate">{ex.bookTitle}</p>
+                    <p className="text-[11px] text-amber-700/70">
+                      {isOwner ? 'wants to borrow this book' : 'request sent — waiting for the owner'}
+                    </p>
+                  </div>
+                  {isOwner && (
+                    <div className="flex gap-1.5 flex-shrink-0">
+                      <button
+                        onClick={() => handleAcceptRequest(ex.id)}
+                        className="flex items-center gap-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 px-2.5 py-1.5 rounded-lg transition"
+                      >
+                        <Check className="w-3.5 h-3.5" /> Accept
+                      </button>
+                      <button
+                        onClick={() => handleDeclineRequest(ex.id)}
+                        className="flex items-center gap-1 text-xs font-medium text-red-700 bg-red-100 hover:bg-red-200 px-2.5 py-1.5 rounded-lg transition"
+                      >
+                        <X className="w-3.5 h-3.5" /> Decline
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
 
         {/* Messages */}
@@ -221,7 +235,7 @@ export default function ChatView({ recipient, contextBook, onClose }: ChatViewPr
         </div>
 
         {/* Input */}
-        <div className="flex items-center gap-2 px-4 py-3 border-t border-amber-100 bg-white/80 backdrop-blur-sm">
+        <div className="flex items-center gap-2 px-4 py-3 border-t border-amber-100 bg-white/80 backdrop-blur-sm rounded-b-2xl">
           <input
             type="text"
             value={newMessage}
@@ -239,41 +253,7 @@ export default function ChatView({ recipient, contextBook, onClose }: ChatViewPr
           </button>
         </div>
 
-        {/* Borrow request lives beneath the chat: discuss first, request when ready */}
-        {requestBook && (
-          <div className="px-4 pb-3 bg-white/80 backdrop-blur-sm rounded-b-2xl">
-            {pendingExchanges.some((ex) => ex.bookId === contextBook?.id) ? (
-              <div className="w-full flex items-center justify-center gap-2 bg-amber-50 border border-amber-200 text-amber-700 py-2.5 rounded-xl text-sm font-medium">
-                <Tag className="w-4 h-4" />
-                Borrow request sent — waiting for the owner
-              </div>
-            ) : (
-              <button
-                onClick={handleRequestBook}
-                className="w-full flex flex-col items-center justify-center bg-white border-2 border-amber-300 text-amber-700 py-2.5 rounded-xl font-medium hover:bg-amber-50 transition"
-              >
-                <span className="flex items-center gap-2 text-sm">
-                  <Tag className="w-4 h-4" />
-                  Request to Borrow
-                </span>
-                <span className="text-[11px] text-amber-600/70 font-normal">tap once you're ready</span>
-              </button>
-            )}
-          </div>
-        )}
       </div>
-
-      {/* In-chat exchange request */}
-      {showRequest && requestBook && requestRecipient && (
-        <ExchangeRequestView
-          recipient={requestRecipient}
-          book={requestBook}
-          onClose={() => {
-            setShowRequest(false);
-            setRequestRecipient(null);
-          }}
-        />
-      )}
     </div>
   );
 }

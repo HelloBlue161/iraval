@@ -5,7 +5,7 @@ import type { User, FriendRequestStatus } from '../types';
 import type { SearchResult } from '../services/firestoreService';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { sendFriendRequest } from '../services/firestoreService';
+import { sendFriendRequest, sendExchangeRequest, checkPendingExchange } from '../services/firestoreService';
 import { getDocs, query, where, collection } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
@@ -18,14 +18,24 @@ interface UserProfileViewProps {
 export default function UserProfileView({ user, book, onClose }: UserProfileViewProps) {
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
-  const { info: toastInfo } = useToast();
+  const { info: toastInfo, error: toastError } = useToast();
   const [friendshipStatus, setFriendshipStatus] = useState<FriendRequestStatus>('none');
   const [statusLoading, setStatusLoading] = useState(true);
   const [sendingRequest, setSendingRequest] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+  const [requestSent, setRequestSent] = useState(false);
 
-  // One inbox: conversations live in the Chats tab. Borrowing starts from
-  // the chat — the "Request to Borrow" button lives beneath the conversation.
-  const handleSendMessage = () => {
+  // If a borrow request is already pending for this book, show that state
+  // instead of the request button.
+  useEffect(() => {
+    if (!currentUser || !book) {
+      setRequestSent(false);
+      return;
+    }
+    checkPendingExchange(currentUser.uid, user.id, book.title).then(setRequestSent);
+  }, [currentUser?.uid, user.id, book?.title]);
+
+  const openChat = () => {
     const params = new URLSearchParams({ with: user.id });
     if (book) {
       params.set('book', book.bookId);
@@ -33,6 +43,36 @@ export default function UserProfileView({ user, book, onClose }: UserProfileView
     }
     onClose();
     navigate(`/chats?${params.toString()}`);
+  };
+
+  // One inbox: conversations live in the Chats tab.
+  const handleSendMessage = () => {
+    openChat();
+  };
+
+  // Request first, chat follows: the request lands in the conversation as
+  // a pending card with Accept/Decline for the owner.
+  const handleRequestBorrow = async () => {
+    if (!currentUser || !book || requesting) return;
+    setRequesting(true);
+    try {
+      await sendExchangeRequest({
+        bookId: book.bookId,
+        bookTitle: book.title,
+        bookAuthor: book.author,
+        bookCoverImageURL: book.coverImageURL,
+        bookLanguage: book.language,
+        senderId: currentUser.uid,
+        receiverId: user.id,
+      });
+      toastInfo('Borrow request sent!');
+      setRequestSent(true);
+      openChat();
+    } catch {
+      toastError('Failed to send borrow request.');
+    } finally {
+      setRequesting(false);
+    }
   };
 
   useEffect(() => {
@@ -143,16 +183,35 @@ export default function UserProfileView({ user, book, onClose }: UserProfileView
           </div>
         )}
 
-        {/* Actions */}
+        {/* Actions — request first, chat follows. The request lands in the
+            chat as a pending card with Accept/Decline for the owner. */}
         <div className="space-y-3">
+          {book && !requestSent && (
+            <button
+              onClick={handleRequestBorrow}
+              disabled={requesting}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white py-3 rounded-xl font-medium hover:from-amber-600 hover:to-orange-600 transition shadow-lg shadow-amber-200 disabled:opacity-50"
+            >
+              <Tag className="w-4 h-4" />
+              {requesting ? 'Sending…' : 'Request to Borrow'}
+            </button>
+          )}
+          {book && requestSent && (
+            <div className="w-full flex items-center justify-center gap-2 bg-amber-50 border border-amber-200 text-amber-700 py-3 rounded-xl font-medium text-sm">
+              <Tag className="w-4 h-4" />
+              Request sent — waiting for the owner
+            </div>
+          )}
           <button
             onClick={handleSendMessage}
-            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white py-3 rounded-xl font-medium hover:from-amber-600 hover:to-orange-600 transition shadow-lg shadow-amber-200"
+            className="w-full text-sm text-amber-600 hover:text-amber-700 font-medium py-1 transition"
           >
-            <MessageSquare className="w-4 h-4" />
-            Send Message
+            <span className="inline-flex items-center gap-1.5">
+              <MessageSquare className="w-4 h-4" />
+              Send a message instead
+            </span>
           </button>
-          <p className="text-xs text-gray-400 text-center">Ask about the book, agree on pickup, then request the borrow from inside the chat</p>
+          <p className="text-xs text-gray-400 text-center">Requesting opens a chat so you can coordinate pickup</p>
 
           <button
             onClick={handleSendFriendRequest}

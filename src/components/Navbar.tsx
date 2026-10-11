@@ -4,13 +4,16 @@ import { useAuth } from '../contexts/AuthContext';
 import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { onUnreadChatCount } from '../services/firestoreService';
+import { onUnreadChatCount, onIncomingRequests } from '../services/firestoreService';
 
 export default function Navbar() {
   const { logoutFn, user } = useAuth();
   const location = useLocation();
   const [pendingCount, setPendingCount] = useState(0);
   const [unreadChats, setUnreadChats] = useState(0);
+  const [friendRequestCount, setFriendRequestCount] = useState(0);
+
+  // Incoming friend requests also deserve the red badge
 
   // Count incoming exchange requests needing action (pending requests +
   // return requests awaiting the owner's confirmation)
@@ -50,6 +53,15 @@ export default function Navbar() {
     return onUnreadChatCount(user.uid, setUnreadChats);
   }, [user]);
 
+  // Incoming friend requests needing a decision
+  useEffect(() => {
+    if (!user) {
+      setFriendRequestCount(0);
+      return;
+    }
+    return onIncomingRequests(user.uid, (reqs) => setFriendRequestCount(reqs.length));
+  }, [user]);
+
   const tabs = [
     { key: 'library', label: 'Library', icon: BookOpen, path: '/library' },
     { key: 'search', label: 'Search', icon: Search, path: '/search' },
@@ -61,7 +73,7 @@ export default function Navbar() {
 
   // One door: the inbox badge combines unread chat messages and
   // incoming exchange requests needing the user's action.
-  const inboxBadge = unreadChats + pendingCount;
+  const inboxBadge = unreadChats + pendingCount + friendRequestCount;
 
   const isActive = (path: string) => location.pathname === path;
 
