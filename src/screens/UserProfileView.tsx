@@ -166,7 +166,6 @@ export default function UserProfileView({ user, book, onClose }: UserProfileView
             <span className="text-amber-700 font-bold text-lg font-serif">{initials}</span>
           </div>
           <h3 className="text-xl font-bold text-gray-900 font-serif">{user.fullName}</h3>
-          <p className="text-sm text-gray-500">{user.email}</p>
           <p className="text-sm text-amber-600 font-medium">{user.city || 'N/A'}</p>
           {user.zipCode && user.zipCode !== 'Unknown' && (
             <p className="text-xs text-gray-400 mt-1">Zip: {user.zipCode}</p>
