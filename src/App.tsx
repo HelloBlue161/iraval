@@ -13,6 +13,8 @@ import BookDetailView from './screens/BookDetailView';
 import FriendRequestView from './screens/FriendRequestView';
 import ChatListView from './screens/ChatListView';
 import SettingsView from './screens/SettingsView';
+import FeedbackView from './screens/FeedbackView';
+import ReviewsView from './screens/ReviewsView';
 import ProfileView from './screens/ProfileView';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -97,6 +99,8 @@ function MainLayout() {
             <Route path="/chats" element={<ChatListView />} />
             <Route path="/exchanges" element={<Navigate to="/chats?tab=requests" replace />} />
             <Route path="/settings" element={<SettingsView />} />
+            <Route path="/feedback" element={<FeedbackView />} />
+            <Route path="/reviews" element={<ReviewsView />} />
             <Route path="*" element={<Navigate to="/library" replace />} />
           </Routes>
         </div>

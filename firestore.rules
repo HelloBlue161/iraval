@@ -102,6 +102,30 @@ service cloud.firestore {
       allow update, delete: if isExchangeParticipant();
     }
 
+    // Private issue reports: signed-in users can submit; only the team
+    // reads them (via the Firebase console).
+    match /feedback/{feedbackId} {
+      allow create: if request.auth != null
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 2000;
+      allow read, update, delete: if false;
+    }
+
+    // Public app reviews: one per user (doc id == uid), readable by
+    // signed-in users. Rating is validated 1–5, text capped at 500 chars.
+    match /reviews/{userId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5
+        && request.resource.data.text is string
+        && request.resource.data.text.size() <= 500;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
     // The custom 6-digit recovery-code flow was removed in favor of
     // Firebase Auth's built-in password-reset email. Deny everything.
     match /recoveryCodes/{codeId} {

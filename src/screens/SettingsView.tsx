@@ -210,6 +210,38 @@ export default function SettingsView() {
         </p>
       </div>
 
+      {/* Help & Feedback */}
+      <div className="bg-white/80 backdrop-blur-sm rounded-xl border border-amber-100 mb-6 shadow-sm">
+        <div className="p-4 border-b border-amber-100">
+          <h3 className="font-semibold text-gray-900 font-serif flex items-center gap-2">
+            <Info className="w-5 h-5 text-amber-500" />
+            Help & Feedback
+          </h3>
+        </div>
+        <div className="divide-y divide-amber-50">
+          <Link
+            to="/feedback"
+            className="flex items-center justify-between p-4 hover:bg-amber-50/50 transition"
+          >
+            <div>
+              <p className="text-sm font-medium text-gray-900">Report an issue</p>
+              <p className="text-xs text-gray-500">Bugs, feature requests — read only by the Iraval team</p>
+            </div>
+            <span className="text-amber-600 text-sm font-medium">→</span>
+          </Link>
+          <Link
+            to="/reviews"
+            className="flex items-center justify-between p-4 hover:bg-amber-50/50 transition"
+          >
+            <div>
+              <p className="text-sm font-medium text-gray-900">Rate Iraval</p>
+              <p className="text-xs text-gray-500">Leave a star rating and a few words for fellow readers</p>
+            </div>
+            <span className="text-amber-600 text-sm font-medium">→</span>
+          </Link>
+        </div>
+      </div>
+
       {/* Sign Out */}
       <button
         onClick={logoutFn}

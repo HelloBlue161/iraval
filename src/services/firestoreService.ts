@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   setDoc,
+  addDoc,
   deleteDoc,
   updateDoc,
   onSnapshot,
@@ -1051,4 +1052,75 @@ export function onBorrowedBooks(
   });
   
   return unsub;
+}
+
+// ── Feedback & Reviews ──────────────────────────────────────────
+
+export interface FeedbackInput {
+  userId: string;
+  username: string;
+  category: 'bug' | 'feature' | 'other';
+  text: string;
+}
+
+/** Private channel: the team reads these in the Firebase console. */
+export async function submitFeedback(input: FeedbackInput): Promise<void> {
+  await addDoc(collection(db, 'feedback'), {
+    userId: input.userId,
+    username: input.username,
+    category: input.category,
+    text: input.text.trim().slice(0, 2000),
+    createdAt: serverTimestamp(),
+  });
+}
+
+export interface AppReview {
+  userId: string;
+  username: string;
+  rating: number; // 1–5
+  text: string;
+  updatedAt?: Date;
+}
+
+/** One review per user (doc id == uid); submitting again overwrites. */
+export async function submitReview(
+  userId: string,
+  username: string,
+  rating: number,
+  text: string
+): Promise<void> {
+  const r = Math.min(5, Math.max(1, Math.round(rating)));
+  await setDoc(
+    doc(db, 'reviews', userId),
+    {
+      userId,
+      username,
+      rating: r,
+      text: text.trim().slice(0, 500),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function deleteReview(userId: string): Promise<void> {
+  await deleteDoc(doc(db, 'reviews', userId));
+}
+
+export function onReviews(callback: (reviews: AppReview[]) => void): Unsubscribe {
+  const q = query(collection(db, 'reviews'), orderBy('updatedAt', 'desc'));
+  return onSnapshot(q, (snap) => {
+    const reviews: AppReview[] = [];
+    snap.forEach((d) => {
+      const data = d.data();
+      reviews.push({
+        userId: d.id,
+        username: data.username || 'anonymous',
+        rating: data.rating || 5,
+        text: data.text || '',
+        updatedAt: data.updatedAt?.toDate?.(),
+      });
+    });
+    callback(reviews);
+  });
 }
