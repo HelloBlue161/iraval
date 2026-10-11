@@ -3,7 +3,7 @@ import { BookOpen, Check, X, Clock, Tag, MessageSquare, PenLine, Send, RotateCcw
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { onUserExchanges, acceptExchange, declineExchange, requestReturn, confirmReturn, deleteExchange, getUserById } from '../services/firestoreService';
+import { onUserExchanges, acceptExchange, declineExchange, requestReturn, confirmReturn, deleteExchangeAndChat, getUserById } from '../services/firestoreService';
 import type { Exchange } from '../types';
 
 export default function MyExchangesView() {
@@ -93,11 +93,12 @@ export default function MyExchangesView() {
 
   const handleDelete = async (id: string) => {
     try {
-      await deleteExchange(id);
+      // Removes the record and its book-scoped chat thread together.
+      await deleteExchangeAndChat(id);
       setDeleteConfirm(null);
-      toastSuccess('Exchange record deleted.');
+      toastSuccess('Exchange record and its chat deleted.');
     } catch {
-      toastError('Failed to delete exchange record.');
+      toastError('Failed to delete. If the chat remains, the chat-delete rules may not be published yet.');
     }
   };
 
@@ -270,7 +271,7 @@ export default function MyExchangesView() {
                             enabled once it's finished (returned/declined/expired) */}
                         {deleteConfirm === ex.id ? (
                           <span className="flex items-center gap-2 text-xs">
-                            <span className="text-gray-500">Delete this record?</span>
+                            <span className="text-gray-500">Delete this record and its chat?</span>
                             <button
                               onClick={() => handleDelete(ex.id)}
                               className="font-medium text-red-600 hover:text-red-800"

@@ -54,6 +54,8 @@ export default function ChatListView() {
     const u = await getUserById(chat.otherUserId);
     if (u) {
       setChatUser(u);
+      // Book-scoped threads reopen with their book context (header chip).
+      setContextBook(chat.bookId && chat.bookTitle ? { id: chat.bookId, title: chat.bookTitle } : null);
       setShowChat(true);
     }
   };
@@ -132,7 +134,14 @@ export default function ChatListView() {
                 {(chat.otherUserName || '??').substring(0, 2).toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-900">{chat.otherUserName}</p>
+                <div className="flex items-center gap-2 min-w-0">
+                  <p className="font-medium text-gray-900 truncate">{chat.otherUserName}</p>
+                  {chat.bookTitle && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium truncate flex-shrink-0">
+                      {chat.bookTitle}
+                    </span>
+                  )}
+                </div>
                 <p className="text-sm text-gray-500 truncate">
                   {chat.lastMessage || 'No messages yet'}
                 </p>

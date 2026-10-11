@@ -216,9 +216,29 @@ export async function declineFriendRequest(requestId: string): Promise<void> {
 
 // ── Message / Chat Services ────────────────────────────────────
 
-export function getChatId(uid1: string, uid2: string): string {
+/**
+ * Chat threads are scoped to a (pair, book): each borrow conversation gets
+ * its own thread, so deleting an exchange can take its chat history with it.
+ * Omit bookId for a general (book-less) thread between the pair.
+ */
+export function getChatId(uid1: string, uid2: string, bookId?: string): string {
   const ids = [uid1, uid2].sort();
-  return `chat_${ids[0]}_${ids[1]}`;
+  const base = `chat_${ids[0]}_${ids[1]}`;
+  return bookId ? `${base}_book_${bookId}` : base;
+}
+
+/** The two participant UIDs encoded in a chat id (never the book suffix). */
+export function getChatParticipants(chatId: string): string[] {
+  const rest = chatId.replace(/^chat_/, '');
+  const bookIdx = rest.indexOf('_book_');
+  const pairPart = bookIdx === -1 ? rest : rest.slice(0, bookIdx);
+  return pairPart.split('_').filter(Boolean);
+}
+
+/** The book a thread is scoped to, or null for general threads. */
+export function getChatBookId(chatId: string): string | null {
+  const idx = chatId.indexOf('_book_');
+  return idx === -1 ? null : chatId.slice(idx + 6) || null;
 }
 
 export function onChatMessages(
@@ -246,14 +266,16 @@ export function onChatMessages(
 export async function sendMessage(
   chatId: string,
   senderId: string,
-  text: string
+  text: string,
+  book?: { id: string; title: string }
 ): Promise<void> {
   const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-  // Participants are encoded in the chat id (chat_{uid1}_{uid2}, uids sorted);
+  // Participants are the two UIDs encoded in the chat id; a book suffix
+  // (_book_<bookId>) is stripped by getChatParticipants().
   // Firebase Auth UIDs are alphanumeric, so splitting on "_" is safe.
   // The participants array is denormalized onto every message so the
   // security rules can authorize reads without extra lookups.
-  const participants = chatId.replace(/^chat_/, '').split('_').filter(Boolean);
+  const participants = getChatParticipants(chatId);
   const message: Omit<Message, 'id'> = {
     chatId,
     senderId,
@@ -276,6 +298,8 @@ export async function sendMessage(
     doc(db, 'chats', chatId),
     {
       participants,
+      bookId: book?.id || null,
+      bookTitle: book?.title || null,
       lastMessage: text,
       lastMessageTime: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -346,6 +370,8 @@ export interface UserChat {
   lastMessage?: string;
   lastMessageTime?: Date;
   unreadCount: number;
+  bookId?: string | null;
+  bookTitle?: string | null;
 }
 
 export async function getUserChats(uid: string): Promise<UserChat[]> {
@@ -379,7 +405,7 @@ export async function getUserChats(uid: string): Promise<UserChat[]> {
       }
     }
 
-    result.push({ chatId, otherUserId, otherUserName: otherName, lastMessage, lastMessageTime, unreadCount: (data.unreadBy?.[uid] as number) || 0 });
+    result.push({ chatId, otherUserId, otherUserName: otherName, lastMessage, lastMessageTime, unreadCount: (data.unreadBy?.[uid] as number) || 0, bookId: data.bookId || null, bookTitle: data.bookTitle || null });
   }
 
   result.sort((a, b) => {
@@ -763,6 +789,42 @@ export async function declineExchange(exchangeId: string, note?: string): Promis
  * availability, badges, and lent status.
  */
 export async function deleteExchange(exchangeId: string): Promise<void> {
+  await deleteDoc(doc(db, 'exchanges', exchangeId));
+}
+
+/**
+ * Delete an exchange record together with its book-scoped chat thread.
+ * The chat is only removed when no other exchange for the same pair+book
+ * still references it. NOTE: deleting the chat parent requires the
+ * participants-based rules to be published (chat delete was added in the
+ * nine-fixes rules update).
+ */
+export async function deleteExchangeAndChat(exchangeId: string): Promise<void> {
+  const exSnap = await getDoc(doc(db, 'exchanges', exchangeId));
+  if (!exSnap.exists()) return;
+  const ex = exSnap.data();
+  const bookId: string = ex.bookId;
+  const senderId: string = ex.senderId;
+  const receiverId: string = ex.receiverId;
+
+  // Delete the chat first: if the rules aren't published yet the chat delete
+  // fails and the exchange is preserved, so nothing ends up half-deleted.
+  const chatId = getChatId(senderId, receiverId, bookId);
+  const othersSnap = await getDocs(
+    query(collection(db, 'exchanges'), where('bookId', '==', bookId))
+  );
+  const stillReferenced = othersSnap.docs.some((d) => {
+    if (d.id === exchangeId) return false;
+    const o = d.data();
+    return (
+      (o.senderId === senderId && o.receiverId === receiverId) ||
+      (o.senderId === receiverId && o.receiverId === senderId)
+    );
+  });
+  if (!stillReferenced) {
+    await deleteChat(chatId);
+  }
+
   await deleteDoc(doc(db, 'exchanges', exchangeId));
 }
 

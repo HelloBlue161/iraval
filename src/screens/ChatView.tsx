@@ -27,7 +27,7 @@ export default function ChatView({ recipient, contextBook, onClose }: ChatViewPr
   const [deleting, setDeleting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const chatId = user ? getChatId(user.uid, recipient.id) : '';
+  const chatId = user ? getChatId(user.uid, recipient.id, contextBook?.id) : '';
 
   useEffect(() => {
     if (!chatId || !user) return;
@@ -96,7 +96,12 @@ export default function ChatView({ recipient, contextBook, onClose }: ChatViewPr
 
   const handleSend = async () => {
     if (!newMessage.trim() || !user) return;
-    await sendMsg(chatId, user.uid, newMessage.trim());
+    await sendMsg(
+      chatId,
+      user.uid,
+      newMessage.trim(),
+      contextBook ? { id: contextBook.id, title: contextBook.title } : undefined
+    );
     setNewMessage('');
   };
 
