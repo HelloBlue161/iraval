@@ -19,6 +19,7 @@ export interface Book {
   addedBy: string;
   addedAt: string;
   bookStatus?: 'available' | 'borrowed' | 'lent' | 'pending_exchange';
+  lentTo?: string; // UID of the borrower while bookStatus === 'lent'
   language?: string;
 }
 

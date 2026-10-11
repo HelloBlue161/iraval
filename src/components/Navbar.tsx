@@ -4,13 +4,15 @@ import { useAuth } from '../contexts/AuthContext';
 import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import { onUnreadChatCount } from '../services/firestoreService';
 
 export default function Navbar() {
   const { logoutFn, user } = useAuth();
   const location = useLocation();
   const [pendingCount, setPendingCount] = useState(0);
+  const [unreadChats, setUnreadChats] = useState(0);
 
-  // Count pending exchange requests
+  // Count pending exchange requests (receiverId stores the UID, not email)
   useEffect(() => {
     if (!user) {
       setPendingCount(0);
@@ -21,7 +23,7 @@ export default function Navbar() {
       try {
         const q = query(
           collection(db, 'exchanges'),
-          where('receiverId', '==', user.email),
+          where('receiverId', '==', user.uid),
           where('status', '==', 'pending')
         );
         const snap = await getDocs(q);
@@ -36,6 +38,15 @@ export default function Navbar() {
     // Refresh every 30 seconds
     const interval = setInterval(countPending, 30000);
     return () => clearInterval(interval);
+  }, [user]);
+
+  // Realtime unread chat messages badge
+  useEffect(() => {
+    if (!user) {
+      setUnreadChats(0);
+      return;
+    }
+    return onUnreadChatCount(user.uid, setUnreadChats);
   }, [user]);
 
   const tabs = [
@@ -91,6 +102,11 @@ export default function Navbar() {
                     {pendingCount > 9 ? '9+' : pendingCount}
                   </span>
                 )}
+                {tab.key === 'chats' && unreadChats > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {unreadChats > 9 ? '9+' : unreadChats}
+                  </span>
+                )}
                 <span className="mt-0.5">{tab.label}</span>
               </Link>
             );
@@ -129,6 +145,11 @@ export default function Navbar() {
                 {tab.key === 'exchanges' && pendingCount > 0 && (
                   <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full px-2 py-0.5">
                     {pendingCount > 9 ? '9+' : pendingCount}
+                  </span>
+                )}
+                {tab.key === 'chats' && unreadChats > 0 && (
+                  <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full px-2 py-0.5">
+                    {unreadChats > 9 ? '9+' : unreadChats}
                   </span>
                 )}
                 {active && (

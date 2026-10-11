@@ -27,14 +27,23 @@ export default function LibraryView() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [showOtherInput, setShowOtherInput] = useState(false);
   const [borrowedBy, setBorrowedBy] = useState<Record<string, string>>({});
+  const [lentTo, setLentTo] = useState<Record<string, string>>({});
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const loadBooks = useCallback(() => {
     if (!user) return;
     return onUserBooks(user.uid, (loadedBooks) => {
       setBooks(loadedBooks);
+      // Resolve names of borrowers for books we've lent out
+      loadedBooks.forEach((book) => {
+        if (book.bookStatus === 'lent' && book.lentTo && !lentTo[book.lentTo]) {
+          getUserById(book.lentTo).then((u) => {
+            if (u) setLentTo((prev) => ({ ...prev, [book.lentTo as string]: u.fullName }));
+          });
+        }
+      });
     });
-  }, [user]);
+  }, [user, lentTo]);
 
   const loadBorrowedBooks = useCallback(() => {
     if (!user) return;
@@ -311,6 +320,14 @@ export default function LibraryView() {
                     <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
                       <User className="w-3 h-3" />
                       Borrowed from {borrowedBy[book.addedBy]}
+                    </p>
+                  )}
+                  {book.bookStatus === 'lent' && (
+                    <p className="text-xs text-green-700 mt-1 flex items-center gap-1">
+                      <User className="w-3 h-3" />
+                      {book.lentTo && lentTo[book.lentTo]
+                        ? `Lent to ${lentTo[book.lentTo]}`
+                        : 'Currently lent out'}
                     </p>
                   )}
                 </div>

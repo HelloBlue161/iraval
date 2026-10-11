@@ -9,6 +9,8 @@ import {
   where,
   orderBy,
   serverTimestamp,
+  increment,
+  deleteField,
   type Unsubscribe,
   getDoc,
   getDocs,
@@ -260,6 +262,14 @@ export async function sendMessage(
     ...message,
     participants,
   });
+  // Track unread counts per participant: everyone except the sender gains
+  // one unread; the sender's own count resets (they just read the thread
+  // by writing in it). Built as an explicit nested map: setDoc with
+  // {merge:true} does NOT expand dotted keys into field paths.
+  const unreadBy: Record<string, unknown> = {};
+  for (const p of participants) {
+    unreadBy[p] = p === senderId ? 0 : increment(1);
+  }
   await setDoc(
     doc(db, 'chats', chatId),
     {
@@ -267,8 +277,40 @@ export async function sendMessage(
       lastMessage: text,
       lastMessageTime: serverTimestamp(),
       updatedAt: serverTimestamp(),
+      unreadBy,
     },
     { merge: true }
+  );
+}
+
+/** Clear the unread count for a user (call when they open the chat). */
+export async function markChatAsRead(chatId: string, uid: string): Promise<void> {
+  await setDoc(
+    doc(db, 'chats', chatId),
+    { unreadBy: { [uid]: 0 } },
+    { merge: true }
+  );
+}
+
+/** Realtime total unread chat messages for the navbar badge. */
+export function onUnreadChatCount(
+  uid: string,
+  callback: (total: number) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, 'chats'),
+    where('participants', 'array-contains', uid)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      let total = 0;
+      snap.forEach((d) => {
+        total += (d.data().unreadBy?.[uid] as number) || 0;
+      });
+      callback(total);
+    },
+    () => callback(0)
   );
 }
 
@@ -280,6 +322,7 @@ export interface UserChat {
   otherUserName: string;
   lastMessage?: string;
   lastMessageTime?: Date;
+  unreadCount: number;
 }
 
 export async function getUserChats(uid: string): Promise<UserChat[]> {
@@ -313,7 +356,7 @@ export async function getUserChats(uid: string): Promise<UserChat[]> {
       }
     }
 
-    result.push({ chatId, otherUserId, otherUserName: otherName, lastMessage, lastMessageTime });
+    result.push({ chatId, otherUserId, otherUserName: otherName, lastMessage, lastMessageTime, unreadCount: (data.unreadBy?.[uid] as number) || 0 });
   }
 
   result.sort((a, b) => {
@@ -595,10 +638,26 @@ export function onUserExchanges(
 }
 
 export async function acceptExchange(exchangeId: string): Promise<void> {
-  await updateDoc(doc(db, 'exchanges', exchangeId), {
+  const exRef = doc(db, 'exchanges', exchangeId);
+  const exSnap = await getDoc(exRef);
+  if (!exSnap.exists()) throw new Error('Exchange not found');
+  const data = exSnap.data() as { bookId?: string; receiverId?: string; senderId?: string };
+  await updateDoc(exRef, {
     status: 'accepted',
     respondedAt: new Date(),
   });
+  // Mark the owner's copy as lent so it shows a badge in their library.
+  // The receiver is the owner, and owners can write their own book docs.
+  if (data.bookId && data.receiverId) {
+    try {
+      await updateDoc(doc(db, 'users', data.receiverId, 'books', data.bookId), {
+        bookStatus: 'lent',
+        lentTo: data.senderId,
+      });
+    } catch {
+      // Book doc missing (legacy id scheme) — the exchange still records it.
+    }
+  }
 }
 
 export async function declineExchange(exchangeId: string, note?: string): Promise<void> {
@@ -610,10 +669,25 @@ export async function declineExchange(exchangeId: string, note?: string): Promis
 }
 
 export async function returnExchange(exchangeId: string): Promise<void> {
-  await updateDoc(doc(db, 'exchanges', exchangeId), {
+  const exRef = doc(db, 'exchanges', exchangeId);
+  const exSnap = await getDoc(exRef);
+  if (!exSnap.exists()) throw new Error('Exchange not found');
+  const data = exSnap.data() as { bookId?: string; receiverId?: string };
+  await updateDoc(exRef, {
     status: 'returned',
     returnedAt: new Date(),
   });
+  // Book goes back to available in the owner's library.
+  if (data.bookId && data.receiverId) {
+    try {
+      await updateDoc(doc(db, 'users', data.receiverId, 'books', data.bookId), {
+        bookStatus: 'available',
+        lentTo: deleteField(),
+      });
+    } catch {
+      // Book doc missing (legacy id scheme) — the exchange still records it.
+    }
+  }
 }
 
 // ── Helpers for filtering unavailable books ─────────────────────

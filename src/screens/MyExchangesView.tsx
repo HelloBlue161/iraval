@@ -1,20 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, Check, X, Clock, Tag, MessageSquare, PenLine, Send, RotateCcw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { onUserExchanges, acceptExchange, declineExchange, returnExchange, getUserById } from '../services/firestoreService';
 import type { Exchange, User } from '../types';
-import ChatView from './ChatView';
 
 export default function MyExchangesView() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [loading, setLoading] = useState(true);
   const [recipientNames, setRecipientNames] = useState<Record<string, string>>({});
   const [senderNames, setSenderNames] = useState<Record<string, string>>({});
-  const [chatUser, setChatUser] = useState<User | null>(null);
-  const [showChat, setShowChat] = useState(false);
   const [declineModal, setDeclineModal] = useState<string | null>(null);
   const [declineNote, setDeclineNote] = useState('');
 
@@ -83,14 +82,11 @@ export default function MyExchangesView() {
   };
 
   const handleChat = (ex: Exchange) => {
+    // One inbox: conversations live in the Chats tab. Deep-link there
+    // instead of opening a separate chat modal.
     const isSender = ex.senderId === user?.uid;
     const otherId = isSender ? ex.receiverId : ex.senderId;
-    getUserById(otherId).then((u) => {
-      if (u) {
-        setChatUser(u);
-        setShowChat(true);
-      }
-    });
+    navigate(`/chats?with=${otherId}`);
   };
 
   const statusConfig: Record<string, { icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; color: string; label: string }> = {
@@ -196,7 +192,7 @@ export default function MyExchangesView() {
                               className="flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition"
                             >
                               <RotateCcw className="w-3.5 h-3.5" />
-                              Return Book
+                              Confirm Return
                             </button>
                           </>
                         )}
@@ -298,13 +294,6 @@ export default function MyExchangesView() {
         );
       })()}
 
-      {/* Chat modal */}
-      {showChat && chatUser && user && (
-        <ChatView
-          recipient={chatUser}
-          onClose={() => setShowChat(false)}
-        />
-      )}
     </div>
   );
 }

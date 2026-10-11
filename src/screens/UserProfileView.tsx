@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { X, MessageSquare, UserPlus, UserCheck, Tag, Loader2 } from 'lucide-react';
 import type { User, FriendRequestStatus } from '../types';
 import type { SearchResult } from '../services/firestoreService';
@@ -7,7 +8,6 @@ import { useToast } from '../contexts/ToastContext';
 import { sendFriendRequest, checkPendingExchange, isBookUnavailable } from '../services/firestoreService';
 import { getDocs, query, where, collection } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import ChatView from './ChatView';
 import ExchangeRequestView from './ExchangeRequestView';
 
 interface UserProfileViewProps {
@@ -18,14 +18,26 @@ interface UserProfileViewProps {
 
 export default function UserProfileView({ user, book, onClose }: UserProfileViewProps) {
   const { user: currentUser } = useAuth();
+  const navigate = useNavigate();
   const { info: toastInfo } = useToast();
   const [friendshipStatus, setFriendshipStatus] = useState<FriendRequestStatus>('none');
   const [statusLoading, setStatusLoading] = useState(true);
   const [sendingRequest, setSendingRequest] = useState(false);
-  const [showChat, setShowChat] = useState(false);
   const [showExchange, setShowExchange] = useState(false);
   const [pendingExchange, setPendingExchange] = useState(false);
   const [bookUnavailable, setBookUnavailable] = useState(false);
+
+  // One inbox: conversations live in the Chats tab. Carry the book context
+  // so the chat opens anchored to this book.
+  const handleSendMessage = () => {
+    const params = new URLSearchParams({ with: user.id });
+    if (book) {
+      params.set('book', book.bookId);
+      params.set('title', book.title);
+    }
+    onClose();
+    navigate(`/chats?${params.toString()}`);
+  };
 
   useEffect(() => {
     if (!currentUser || !book) { setPendingExchange(false); return; }
@@ -149,7 +161,7 @@ export default function UserProfileView({ user, book, onClose }: UserProfileView
         {/* Actions */}
         <div className="space-y-3">
           <button
-            onClick={() => setShowChat(true)}
+            onClick={handleSendMessage}
             className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white py-3 rounded-xl font-medium hover:from-amber-600 hover:to-orange-600 transition shadow-lg shadow-amber-200"
           >
             <MessageSquare className="w-4 h-4" />
@@ -220,14 +232,6 @@ export default function UserProfileView({ user, book, onClose }: UserProfileView
           )}
         </div>
       </div>
-
-      {/* Chat modal */}
-      {showChat && currentUser && (
-        <ChatView
-          recipient={user}
-          onClose={() => setShowChat(false)}
-        />
-      )}
 
       {/* Exchange request modal */}
       {showExchange && book && (

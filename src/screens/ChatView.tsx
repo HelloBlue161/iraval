@@ -1,32 +1,78 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Send, Feather } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { X, Send, Feather, Tag } from 'lucide-react';
 import type { Message } from '../types';
+import type { Exchange } from '../types';
 import { useAuth } from '../contexts/AuthContext';
-import { getChatId, onChatMessages, sendMessage as sendMsg } from '../services/firestoreService';
+import { getChatId, onChatMessages, sendMessage as sendMsg, markChatAsRead, onUserExchanges, getUserById } from '../services/firestoreService';
+import ExchangeRequestView from './ExchangeRequestView';
+import type { SearchResult } from '../services/firestoreService';
+import type { User } from '../types';
+
+export interface ChatContextBook {
+  id: string;
+  title: string;
+}
 
 interface ChatViewProps {
   recipient: { id: string; fullName: string };
+  contextBook?: ChatContextBook | null;
   onClose: () => void;
 }
 
-export default function ChatView({ recipient, onClose }: ChatViewProps) {
+export default function ChatView({ recipient, contextBook, onClose }: ChatViewProps) {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
+  const [showRequest, setShowRequest] = useState(false);
+  const [requestRecipient, setRequestRecipient] = useState<User | null>(null);
+  const [pendingExchanges, setPendingExchanges] = useState<Exchange[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const chatId = user ? getChatId(user.uid, recipient.id) : '';
 
   useEffect(() => {
-    if (!chatId) return;
+    if (!chatId || !user) return;
+    // Opening the chat means reading it: clear our unread count, and keep
+    // it clear as new incoming messages arrive while we're viewing.
+    markChatAsRead(chatId, user.uid).catch(() => {});
     return onChatMessages(chatId, (msgs) => {
       setMessages(msgs);
+      if (msgs.length > 0 && msgs[msgs.length - 1].senderId !== user.uid) {
+        markChatAsRead(chatId, user.uid).catch(() => {});
+      }
     });
-  }, [chatId]);
+  }, [chatId, user]);
+
+  // Pending borrow requests between this pair — surfaced here so nothing
+  // gets lost; accept/decline lives in the Exchanges tracker.
+  useEffect(() => {
+    if (!user) return;
+    return onUserExchanges(user.uid, (exs) => {
+      setPendingExchanges(
+        exs.filter(
+          (ex) =>
+            ex.status === 'pending' &&
+            ((ex.senderId === user.uid && ex.receiverId === recipient.id) ||
+              (ex.senderId === recipient.id && ex.receiverId === user.uid))
+        )
+      );
+    });
+  }, [user, recipient.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const handleRequestBook = async () => {
+    // ExchangeRequestView needs the full user record
+    const u = await getUserById(recipient.id);
+    if (u) {
+      setRequestRecipient(u);
+      setShowRequest(true);
+    }
+  };
 
   const handleSend = async () => {
     if (!newMessage.trim() || !user) return;
@@ -43,21 +89,71 @@ export default function ChatView({ recipient, onClose }: ChatViewProps) {
 
   if (!user) return null;
 
+  const requestBook: SearchResult | null = contextBook
+    ? {
+        bookId: contextBook.id,
+        title: contextBook.title,
+        author: '',
+        coverImageURL: '',
+        addedBy: recipient.id,
+        addedByUsername: '',
+        addedByFullName: recipient.fullName,
+        addedByCity: '',
+        addedByZipCode: '',
+      }
+    : null;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl w-full max-w-md flex flex-col max-h-[80vh] border border-amber-100 shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-amber-100 bg-gradient-to-r from-amber-50 to-orange-50 rounded-t-2xl">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-200 to-orange-200 flex items-center justify-center text-amber-700 font-bold text-xs font-serif">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-200 to-orange-200 flex items-center justify-center text-amber-700 font-bold text-xs font-serif flex-shrink-0">
               {(recipient.fullName || '??').substring(0, 2).toUpperCase()}
             </div>
-            <span className="font-medium text-gray-900 font-serif">{recipient.fullName || 'Unknown'}</span>
+            <div className="min-w-0">
+              <span className="font-medium text-gray-900 font-serif block truncate">{recipient.fullName || 'Unknown'}</span>
+              {contextBook && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full mt-0.5 max-w-full">
+                  <Tag className="w-3 h-3 flex-shrink-0" />
+                  <span className="truncate">About: {contextBook.title}</span>
+                </span>
+              )}
+            </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {requestBook && (
+              <button
+                onClick={handleRequestBook}
+                className="text-xs font-medium text-amber-700 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-lg transition"
+              >
+                Request Book
+              </button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
+
+        {/* Pending exchange banner */}
+        {pendingExchanges.length > 0 && (
+          <button
+            onClick={() => {
+              onClose();
+              navigate('/exchanges');
+            }}
+            className="mx-3 mt-2 flex items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 hover:bg-amber-100 transition text-left"
+          >
+            <Tag className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="truncate">
+              {pendingExchanges.length === 1
+                ? `Borrow request pending: ${pendingExchanges[0].bookTitle || 'a book'} — tap to review`
+                : `${pendingExchanges.length} borrow requests pending — tap to review`}
+            </span>
+          </button>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2" style={{ background: 'linear-gradient(to bottom, #fffbeb, #fff)' }}>
@@ -109,6 +205,18 @@ export default function ChatView({ recipient, onClose }: ChatViewProps) {
           </button>
         </div>
       </div>
+
+      {/* In-chat exchange request */}
+      {showRequest && requestBook && requestRecipient && (
+        <ExchangeRequestView
+          recipient={requestRecipient}
+          book={requestBook}
+          onClose={() => {
+            setShowRequest(false);
+            setRequestRecipient(null);
+          }}
+        />
+      )}
     </div>
   );
 }
