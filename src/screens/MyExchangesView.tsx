@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Check, X, Clock, Tag, MessageSquare, PenLine, Send, RotateCcw } from 'lucide-react';
+import { BookOpen, Check, X, Clock, Tag, MessageSquare, PenLine, Send, RotateCcw, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { onUserExchanges, acceptExchange, declineExchange, requestReturn, confirmReturn, getUserById } from '../services/firestoreService';
+import { onUserExchanges, acceptExchange, declineExchange, requestReturn, confirmReturn, deleteExchange, getUserById } from '../services/firestoreService';
 import type { Exchange } from '../types';
 
 export default function MyExchangesView() {
@@ -16,6 +16,7 @@ export default function MyExchangesView() {
   const [senderNames, setSenderNames] = useState<Record<string, string>>({});
   const [declineModal, setDeclineModal] = useState<string | null>(null);
   const [declineNote, setDeclineNote] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -89,6 +90,20 @@ export default function MyExchangesView() {
       toastError('Failed to confirm return.');
     }
   };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteExchange(id);
+      setDeleteConfirm(null);
+      toastSuccess('Exchange record deleted.');
+    } catch {
+      toastError('Failed to delete exchange record.');
+    }
+  };
+
+  // Only finished exchanges can be removed — active ones drive book
+  // availability, badges, and lent status.
+  const isDeletable = (status: string) => ['returned', 'declined', 'expired'].includes(status);
 
   const handleChat = (ex: Exchange) => {
     // One inbox: conversations live in the Chats tab. Deep-link there
@@ -249,6 +264,39 @@ export default function MyExchangesView() {
                           >
                             <PenLine className="w-3.5 h-3.5" />
                             Send a note
+                          </button>
+                        )}
+                        {/* Delete record: greyed out while the exchange is active,
+                            enabled once it's finished (returned/declined/expired) */}
+                        {deleteConfirm === ex.id ? (
+                          <span className="flex items-center gap-2 text-xs">
+                            <span className="text-gray-500">Delete this record?</span>
+                            <button
+                              onClick={() => handleDelete(ex.id)}
+                              className="font-medium text-red-600 hover:text-red-800"
+                            >
+                              Delete
+                            </button>
+                            <button
+                              onClick={() => setDeleteConfirm(null)}
+                              className="font-medium text-gray-500 hover:text-gray-700"
+                            >
+                              Keep
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setDeleteConfirm(ex.id)}
+                            disabled={!isDeletable(ex.status)}
+                            title={isDeletable(ex.status) ? 'Delete this exchange record' : 'Available once the exchange is finished'}
+                            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition ${
+                              isDeletable(ex.status)
+                                ? 'text-gray-500 bg-white border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200'
+                                : 'text-gray-300 bg-gray-50 border-gray-100 cursor-not-allowed'
+                            }`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Delete
                           </button>
                         )}
                       </div>

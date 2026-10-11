@@ -696,6 +696,15 @@ export async function declineExchange(exchangeId: string, note?: string): Promis
 }
 
 /**
+ * Delete an exchange record. Only terminal states (returned/declined/expired)
+ * may be deleted — the UI enforces this, since active exchanges drive book
+ * availability, badges, and lent status.
+ */
+export async function deleteExchange(exchangeId: string): Promise<void> {
+  await deleteDoc(doc(db, 'exchanges', exchangeId));
+}
+
+/**
  * Borrower hands the book back: marks the exchange as return-requested.
  * The book stays 'lent' until the owner confirms receipt.
  */

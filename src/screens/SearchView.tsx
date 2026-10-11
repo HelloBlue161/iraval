@@ -273,6 +273,14 @@ export default function SearchView() {
 
   const isUsingZipFilter = !!filterZip;
 
+  // When any result-shrinking filter is on, every matching book is already
+  // shown (there's no pagination), so the "of N" total should reflect the
+  // filtered set — otherwise it reads as if books are missing.
+  const hasResultFilters =
+    isUsingZipFilter ||
+    (!filterZip && maxDistance > 0 && !!currentZip) ||
+    !!languageFilter;
+
   return (
     <div className="max-w-4xl mx-auto">
       <div className="mb-6">
@@ -418,7 +426,7 @@ export default function SearchView() {
       {!loading && !query && results.length > 0 && (
         <>
           <p className="text-sm text-gray-500 mb-3">
-            Showing {filteredResults.length} of {results.length} books in your area
+            Showing {filteredResults.length} of {hasResultFilters ? filteredResults.length : results.length} books in your area
             {isUsingZipFilter ? ` (zip: ${filterZip})` : maxDistance > 0 ? ` (within ${maxDistance} mi)` : ''}
           </p>
           <div className="space-y-3">
